@@ -1,33 +1,33 @@
 {
   "project_info": {
-    "project_number": "862871363044",
-    "project_id": "masrofaty-ffde6",
-    "storage_bucket": "masrofaty-ffde6.firebasestorage.app"
+    "project_number": "000000000000",
+    "project_id": "fire-manager-placeholder",
+    "storage_bucket": "fire-manager-placeholder.appspot.com"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:862871363044:android:19570a29a40b3c5de23bf1",
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
         "android_client_info": {
           "package_name": "com.safetyoffice.firemanager"
         }
       },
       "oauth_client": [
         {
-          "client_id": "862871363044-m8k72eb17r9bv7ls33882vliiplruunn.apps.googleusercontent.com",
+          "client_id": "000000000000-placeholder.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyBulR7DZAV1hnoiKnTS52fYKcpzn0cVMYU"
+          "current_key": "REPLACE_WITH_REAL_FIREBASE_API_KEY"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "862871363044-m8k72eb17r9bv7ls33882vliiplruunn.apps.googleusercontent.com",
+              "client_id": "000000000000-placeholder.apps.googleusercontent.com",
               "client_type": 3
             }
           ]

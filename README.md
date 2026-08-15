@@ -19,6 +19,8 @@
   وسيتم توزيعها على اسم العميل والعدد والنوع والسعر تلقائيا.
 - خانة اللوكيشن تقبل كتابة لينك Google Maps يدويا، أو زر `موقعي` لحفظ لينك موقعك الحالي.
 - رقم الموبايل كتابة عادية بدون إدخال صوتي.
+- تعديل بيانات العملاء بعد التسجيل، وتعديل عمليات الطفايات لو حصل إدخال غلط.
+- إعدادات نسب مستقلة للطفايات وشهادات السلامة والتقارير الفنية.
 - واجهة أحدث بكروت وخانات إدخال وأزرار محسنة.
 
 ## البناء على GitHub
@@ -35,12 +37,20 @@
 
 ## ملاحظة Google Sync
 
-تم تغيير هوية تثبيت التطبيق بالكامل حتى يظهر كتثبيت جديد وليس تحديثا للتطبيق القديم:
+تم فصل التطبيق بالكامل عن مصروفاتي. هوية التطبيق الحالية:
 
 `com.safetyoffice.firemanager`
 
-لو تسجيل Google لم يعمل بعد تثبيت APK من GitHub، افتح Firebase Console للمشروع `masrofaty-ffde6` وأضف Android app جديد بالـ package name أعلاه، ثم أضف SHA-1 الذي يظهر في خطوة `Print debug SHA-1 for Firebase` داخل GitHub Actions، ثم حمل ملف `google-services.json` الجديد وضعه في:
+لكي تعمل مزامنة جوجل بدون خلط مع مصروفاتي:
 
-`app/google-services.json`
+1. أنشئ Firebase Project جديد مستقل لهذا التطبيق.
+2. أضف Android app جديد بالـ package name:
+   `com.safetyoffice.firemanager`
+3. أضف SHA-1 الذي يظهر في GitHub Actions من خطوة `Print debug SHA-1 for Firebase`.
+4. حمل ملف `google-services.json` من Firebase.
+5. في GitHub افتح Settings ثم Secrets and variables ثم Actions.
+6. أضف Secret باسم:
+   `GOOGLE_SERVICES_JSON`
+7. ضع محتوى ملف `google-services.json` كاملا داخل هذا السر.
 
-بعدها شغل الـ Workflow مرة أخرى.
+الـ Workflow يرفض أي ملف Firebase يحتوي على `masrofaty` حتى لا تختلط بيانات التطبيقين.

@@ -12,6 +12,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.speech.RecognizerIntent;
@@ -132,6 +133,7 @@ public class MainActivity extends Activity {
         addTab(tabs, "الشهادات", v -> showCertificates());
         addTab(tabs, "الصيانة", v -> showMaintenance());
         addTab(tabs, "تقرير الشهر", v -> showMonthlyReport());
+        addTab(tabs, "الإعدادات", v -> showSettings());
         addTab(tabs, "Google", v -> showSync());
         hsv.addView(tabs);
         root.addView(hsv, matchWrap());
@@ -283,13 +285,43 @@ public class MainActivity extends Activity {
         Cursor c = db.all("extinguishers");
         try {
             while (c.moveToNext()) {
-                card(c.getString(c.getColumnIndexOrThrow("customer_name")),
+                long id = c.getLong(c.getColumnIndexOrThrow("id"));
+                String oldCustomer = c.getString(c.getColumnIndexOrThrow("customer_name"));
+                card(oldCustomer,
                         "عدد: " + c.getInt(c.getColumnIndexOrThrow("count")) +
                                 "\nنوع: " + val(c, "extinguisher_type") +
                                 "\nوزن: " + val(c, "weight") +
                                 "\nمبلغ: " + money(c.getDouble(c.getColumnIndexOrThrow("total_price"))) +
                                 "\nالتذكير: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("reminder_at"))) +
                                 "\nرقم: " + val(c, "phone") + "\nلوكيشن: " + val(c, "location"));
+                EditText editCustomer = input("تعديل اسم العميل", InputType.TYPE_CLASS_TEXT);
+                editCustomer.setText(oldCustomer);
+                EditText editPhone = input("تعديل رقم العميل", InputType.TYPE_CLASS_PHONE);
+                editPhone.setText(val(c, "phone"));
+                EditText editLocation = input("تعديل اللوكيشن", InputType.TYPE_CLASS_TEXT);
+                editLocation.setText(val(c, "location"));
+                EditText editType = input("تعديل نوع الطفاية", InputType.TYPE_CLASS_TEXT);
+                editType.setText(val(c, "extinguisher_type"));
+                EditText editWeight = input("تعديل وزن الطفاية", InputType.TYPE_CLASS_TEXT);
+                editWeight.setText(val(c, "weight"));
+                EditText editCount = input("تعديل عدد الطفايات", InputType.TYPE_CLASS_NUMBER);
+                editCount.setText(String.valueOf(c.getInt(c.getColumnIndexOrThrow("count"))));
+                EditText editPrice = input("تعديل إجمالي مبلغ الطفايات", numberType());
+                editPrice.setText(cleanNumber(c.getDouble(c.getColumnIndexOrThrow("total_price"))));
+                button("حفظ تعديل عملية الطفايات", () -> {
+                    if (empty(editCustomer) || empty(editCount) || empty(editPrice)) return;
+                    ContentValues cv = new ContentValues();
+                    cv.put("customer_name", txt(editCustomer));
+                    cv.put("phone", txt(editPhone));
+                    cv.put("location", txt(editLocation));
+                    cv.put("extinguisher_type", txt(editType));
+                    cv.put("weight", txt(editWeight));
+                    cv.put("count", integer(editCount));
+                    cv.put("total_price", dbl(editPrice));
+                    db.update("extinguishers", cv, "id=?", String.valueOf(id));
+                    afterSave("تم تعديل عملية الطفايات");
+                    showExtinguishers();
+                });
             }
         } finally {
             c.close();
@@ -300,15 +332,35 @@ public class MainActivity extends Activity {
         currentTab = "customers";
         clear();
         section("العملاء");
-        Cursor c = db.raw("SELECT customer_name, phone, location, SUM(count) total_count, SUM(total_price) total_price " +
-                "FROM extinguishers GROUP BY customer_name, phone, location ORDER BY MAX(created_at) DESC");
+        Cursor c = db.raw("SELECT customer_name, phone, location, SUM(total_count) total_count, SUM(total_price) total_price " +
+                "FROM (" +
+                "SELECT customer_name, phone, location, SUM(count) total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM extinguishers GROUP BY customer_name, phone, location " +
+                "UNION ALL SELECT customer_name, phone, location, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM safety_certificates GROUP BY customer_name, phone, location " +
+                "UNION ALL SELECT customer_name, phone, location, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM technical_reports GROUP BY customer_name, phone, location " +
+                "UNION ALL SELECT customer_name, phone, location, 0 total_count, 0 total_price, MAX(created_at) last_at FROM maintenance_contracts GROUP BY customer_name, phone, location" +
+                ") GROUP BY customer_name, phone, location ORDER BY MAX(last_at) DESC");
         try {
             while (c.moveToNext()) {
-                card(c.getString(0),
-                        "رقم: " + safe(c.getString(1)) +
-                                "\nلوكيشن: " + safe(c.getString(2)) +
+                String oldName = c.getString(0);
+                String oldPhone = emptyForDb(c.getString(1));
+                String oldLocation = emptyForDb(c.getString(2));
+                card(oldName,
+                        "رقم: " + safe(oldPhone) +
+                                "\nلوكيشن: " + safe(oldLocation) +
                                 "\nإجمالي الطفايات: " + c.getInt(3) +
                                 "\nإجمالي المبلغ: " + money(c.getDouble(4)));
+                EditText name = input("تعديل اسم العميل", InputType.TYPE_CLASS_TEXT);
+                name.setText(oldName);
+                EditText phone = input("تعديل رقم العميل", InputType.TYPE_CLASS_PHONE);
+                phone.setText(oldPhone);
+                EditText location = input("تعديل اللوكيشن", InputType.TYPE_CLASS_TEXT);
+                location.setText(oldLocation);
+                button("حفظ تعديل العميل", () -> {
+                    if (empty(name)) return;
+                    db.updateCustomerEverywhere(oldName, oldPhone, oldLocation, txt(name), txt(phone), txt(location));
+                    afterSave("تم تعديل بيانات العميل في كل السجلات");
+                    showCustomers();
+                });
             }
         } finally {
             c.close();
@@ -331,9 +383,10 @@ public class MainActivity extends Activity {
         EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
+        EditText amount = input("مبلغ/سعر البند", numberType());
         EditText date = input("تاريخ البداية yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
-        voiceAllButton("قول كل البيانات مرة واحدة", customer, location, date);
+        voiceAllButton("قول كل البيانات مرة واحدة", customer, location, amount, date);
         button(buttonText, () -> {
             if (empty(customer) || empty(date)) return;
             try {
@@ -343,6 +396,7 @@ public class MainActivity extends Activity {
                 cv.put("customer_name", txt(customer));
                 cv.put("phone", txt(phone));
                 cv.put("location", txt(location));
+                cv.put("total_price", dbl(amount));
                 cv.put(dateColumn, base);
                 cv.put("reminder_at", reminder);
                 cv.put("created_at", System.currentTimeMillis());
@@ -413,13 +467,17 @@ public class MainActivity extends Activity {
             if (c.moveToFirst()) {
                 int count = c.getInt(0);
                 double total = c.getDouble(1);
+                double pct = db.settingDouble("extinguisher_percent", 25);
                 card("عدد الطفايات هذا الشهر", count + " طفاية");
                 card("إجمالي مبلغ الطفايات", money(total));
-                card("نسبتك 25%", money(total * 0.25));
+                card("نسبتك في الطفايات " + cleanNumber(pct) + "%", money(total * pct / 100.0));
             }
         } finally {
             c.close();
         }
+
+        monthlyAmountCard("شهادات السلامة", "safety_certificates", "certificate_percent", range);
+        monthlyAmountCard("التقارير الفنية", "technical_reports", "report_percent", range);
 
         section("سلف هذا الشهر");
         Cursor a = db.raw("SELECT employee_name, amount, note FROM advances WHERE created_at BETWEEN ? AND ? ORDER BY created_at DESC",
@@ -431,6 +489,42 @@ public class MainActivity extends Activity {
         } finally {
             a.close();
         }
+    }
+
+    private void monthlyAmountCard(String label, String table, String settingKey, long[] range) {
+        Cursor c = db.raw("SELECT COALESCE(SUM(total_price),0) FROM " + table +
+                        " WHERE created_at BETWEEN ? AND ?",
+                String.valueOf(range[0]), String.valueOf(range[1]));
+        try {
+            if (c.moveToFirst()) {
+                double total = c.getDouble(0);
+                double pct = db.settingDouble(settingKey, 0);
+                card(label, "الإجمالي: " + money(total) +
+                        "\nنسبتك " + cleanNumber(pct) + "%: " + money(total * pct / 100.0));
+            }
+        } finally {
+            c.close();
+        }
+    }
+
+    private void showSettings() {
+        currentTab = "settings";
+        clear();
+        section("إعدادات النسب");
+        EditText extinguisher = input("نسبة الطفايات %", numberType());
+        extinguisher.setText(db.setting("extinguisher_percent", "25"));
+        EditText certificates = input("نسبة شهادات السلامة %", numberType());
+        certificates.setText(db.setting("certificate_percent", "0"));
+        EditText reports = input("نسبة التقارير الفنية %", numberType());
+        reports.setText(db.setting("report_percent", "0"));
+        button("حفظ النسب", () -> {
+            db.setSetting("extinguisher_percent", txt(extinguisher).isEmpty() ? "0" : txt(extinguisher));
+            db.setSetting("certificate_percent", txt(certificates).isEmpty() ? "0" : txt(certificates));
+            db.setSetting("report_percent", txt(reports).isEmpty() ? "0" : txt(reports));
+            afterSave("تم حفظ النسب");
+            showSettings();
+        });
+        small("كل نسبة تتحسب في تقرير الشهر على إجمالي مبلغ البند الخاص بها.");
     }
 
     private void showSync() {
@@ -456,6 +550,7 @@ public class MainActivity extends Activity {
             while (c.moveToNext()) {
                 card(label + " - " + c.getString(c.getColumnIndexOrThrow("customer_name")),
                         "التاريخ: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow(dateColumn))) +
+                                "\nالمبلغ: " + money(c.getDouble(c.getColumnIndexOrThrow("total_price"))) +
                                 "\nالتذكير: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("reminder_at"))) +
                                 "\nرقم: " + val(c, "phone") + "\nلوكيشن: " + val(c, "location"));
             }
@@ -510,9 +605,44 @@ public class MainActivity extends Activity {
         b.setGravity(Gravity.RIGHT);
         box.addView(t, matchWrap());
         box.addView(b, matchWrap());
+        String mapLink = extractMapLink(body);
+        if (mapLink != null) {
+            Button open = new Button(this);
+            open.setText("فتح اللوكيشن");
+            open.setTextColor(BRAND);
+            open.setTextSize(13);
+            open.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(14)));
+            open.setOnClickListener(v -> openLocation(mapLink));
+            LinearLayout.LayoutParams openLp = matchWrap();
+            openLp.setMargins(0, dp(6), 0, 0);
+            box.addView(open, openLp);
+        }
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(5), 0, dp(9));
         content.addView(box, lp);
+    }
+
+    private String extractMapLink(String text) {
+        if (text == null) return null;
+        for (String part : text.split("\\s+")) {
+            String cleaned = part.trim().replace("،", "").replace(",", "");
+            if (cleaned.startsWith("https://www.google.com/maps") ||
+                    cleaned.startsWith("http://www.google.com/maps") ||
+                    cleaned.startsWith("https://maps.google.com") ||
+                    cleaned.startsWith("geo:")) {
+                return cleaned;
+            }
+        }
+        return null;
+    }
+
+    private void openLocation(String link) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(link));
+            startActivity(intent);
+        } catch (Exception e) {
+            toast("تعذر فتح اللوكيشن");
+        }
     }
 
     private void small(String text) {
@@ -1239,6 +1369,10 @@ public class MainActivity extends Activity {
 
     private String safe(String value) {
         return value == null || value.trim().isEmpty() ? "-" : value;
+    }
+
+    private String emptyForDb(String value) {
+        return value == null ? "" : value;
     }
 
     private String money(double value) {

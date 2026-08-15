@@ -88,7 +88,7 @@ public class SyncManager {
             data.put("snapshot", db.exportJson().toString());
             data.put("updated_at", System.currentTimeMillis());
             data.put("email", u.getEmail());
-            firestore.collection("users").document(u.getUid())
+            firestore.collection("fire_manager_users").document(u.getUid())
                     .set(data, SetOptions.merge())
                     .addOnSuccessListener(v -> {
                         Toast.makeText(context, "تم حفظ البيانات على جوجل", Toast.LENGTH_SHORT).show();
@@ -111,7 +111,7 @@ public class SyncManager {
             if (onDone != null) onDone.run();
             return;
         }
-        firestore.collection("users").document(u.getUid()).get()
+        firestore.collection("fire_manager_users").document(u.getUid()).get()
                 .addOnSuccessListener(doc -> importDocument(doc, onDone))
                 .addOnFailureListener(e -> {
                     Toast.makeText(context, "فشل الاسترجاع: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -125,7 +125,7 @@ public class SyncManager {
             Map<String, Object> data = new HashMap<>();
             data.put("snapshot", db.exportJson().toString());
             data.put("updated_at", System.currentTimeMillis());
-            firestore.collection("users").document(user().getUid()).set(data, SetOptions.merge());
+            firestore.collection("fire_manager_users").document(user().getUid()).set(data, SetOptions.merge());
         } catch (Exception ignored) {
         }
     }
@@ -133,7 +133,7 @@ public class SyncManager {
     private void restoreThenUpload(Runnable onDone) {
         FirebaseUser u = user();
         if (u == null) return;
-        firestore.collection("users").document(u.getUid()).get()
+        firestore.collection("fire_manager_users").document(u.getUid()).get()
                 .addOnSuccessListener(doc -> importDocument(doc, () -> upload(onDone)))
                 .addOnFailureListener(e -> upload(onDone));
     }
