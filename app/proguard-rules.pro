@@ -1,1 +1,1 @@
--keep class com.mohamed.expenseguard.** { *; }
+-keep class com.safetyoffice.firemanager.** { *; }
