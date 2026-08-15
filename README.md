@@ -10,6 +10,8 @@
 - التقارير الفنية بتذكير سنوي.
 - عقود الصيانة بتذكير زيارة كل 3 شهور لمدة 5 سنوات، والتنبيه قبل الزيارة بـ 5 أيام، مع ترحيل الموعد لو وقع الجمعة أو السبت.
 - تسجيل دخول Google ومزامنة Firebase Firestore.
+- إدخال صوتي في كل الخانات عن طريق زر `صوت` بجانب كل حقل.
+- واجهة أحدث بكروت وخانات إدخال وأزرار محسنة.
 
 ## البناء على GitHub
 
@@ -23,11 +25,11 @@
 
 ## ملاحظة Google Sync
 
-تم تجهيز التطبيق بإعدادات Firebase المستخرجة من ملف APK الذي أرسلته وبنفس package name:
+تم تغيير هوية تثبيت التطبيق حتى يظهر كتثبيت جديد وليس تحديثا للتطبيق القديم:
 
-`com.mohamed.expenseguard`
+`com.mohamed.firefightingmanager`
 
-لو تسجيل Google لم يعمل بعد تثبيت APK من GitHub، افتح Firebase Console للمشروع `masrofaty-ffde6` وأضف SHA-1 الذي يظهر في خطوة `Print debug SHA-1 for Firebase` داخل GitHub Actions، ثم حمل ملف `google-services.json` الجديد وضعه في:
+لو تسجيل Google لم يعمل بعد تثبيت APK من GitHub، افتح Firebase Console للمشروع `masrofaty-ffde6` وأضف Android app جديد بالـ package name أعلاه، ثم أضف SHA-1 الذي يظهر في خطوة `Print debug SHA-1 for Firebase` داخل GitHub Actions، ثم حمل ملف `google-services.json` الجديد وضعه في:
 
 `app/google-services.json`
 

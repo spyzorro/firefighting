@@ -2,13 +2,16 @@ package com.mohamed.expenseguard;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.speech.RecognizerIntent;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -22,17 +25,24 @@ import android.widget.Toast;
 
 import com.google.firebase.auth.FirebaseUser;
 
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
+    private static final int VOICE_REQUEST = 5042;
+    private static final int RECORD_AUDIO_REQUEST = 5043;
     private static final int BRAND = Color.rgb(15, 118, 110);
-    private static final int BG = Color.rgb(247, 250, 249);
+    private static final int BRAND_LIGHT = Color.rgb(204, 251, 241);
+    private static final int BG = Color.rgb(239, 246, 245);
+    private static final int CARD = Color.rgb(255, 255, 255);
+    private static final int BORDER = Color.rgb(203, 213, 225);
     private static final int TEXT = Color.rgb(15, 23, 42);
 
     private DatabaseHelper db;
     private SyncManager sync;
     private LinearLayout content;
+    private EditText voiceTarget;
     private String currentTab = "home";
 
     @Override
@@ -51,6 +61,21 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == SyncManager.RC_SIGN_IN) {
             sync.handleSignInResult(data, this::showSync);
+        } else if (requestCode == VOICE_REQUEST && resultCode == RESULT_OK && data != null && voiceTarget != null) {
+            ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+            if (matches != null && !matches.isEmpty()) {
+                voiceTarget.setText(cleanVoiceText(matches.get(0), voiceTarget.getInputType()));
+                voiceTarget.setSelection(voiceTarget.getText().length());
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == RECORD_AUDIO_REQUEST && grantResults.length > 0 &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED && voiceTarget != null) {
+            startVoiceInput(voiceTarget);
         }
     }
 
@@ -58,11 +83,11 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BG);
-        root.setPadding(dp(14), dp(12), dp(14), dp(10));
+        root.setPadding(dp(14), dp(14), dp(14), dp(10));
 
         TextView title = new TextView(this);
         title.setText("إدارة الطفايات والمرتبات");
-        title.setTextSize(23);
+        title.setTextSize(25);
         title.setTextColor(TEXT);
         title.setGravity(Gravity.RIGHT);
         title.setTypeface(null, 1);
@@ -72,6 +97,7 @@ public class MainActivity extends Activity {
         sub.setText("تسجيل، تنبيهات، تقرير شهري، ومزامنة Google");
         sub.setTextColor(Color.rgb(71, 85, 105));
         sub.setGravity(Gravity.RIGHT);
+        sub.setTextSize(14);
         root.addView(sub, matchWrap());
 
         HorizontalScrollView hsv = new HorizontalScrollView(this);
@@ -102,7 +128,8 @@ public class MainActivity extends Activity {
         Button b = new Button(this);
         b.setText(text);
         b.setTextColor(Color.WHITE);
-        b.setBackgroundColor(BRAND);
+        b.setTextSize(14);
+        b.setBackground(rounded(BRAND, BRAND, dp(20)));
         b.setOnClickListener(listener);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
         lp.setMargins(dp(4), dp(10), dp(4), dp(6));
@@ -121,7 +148,7 @@ public class MainActivity extends Activity {
         card("إجمالي مبلغ الطفايات", money(total));
         card("العملاء المسجلين", customers + " عميل");
         card("عقود الصيانة", maintenance + " عقد");
-        small("ابدأ من أي تبويب بالأعلى. كل البيانات محفوظة محليا، ولو سجلت Google سيتم رفع نسخة تلقائيا.");
+        small("ابدأ من أي تبويب بالأعلى. اضغط زر صوت بجانب أي خانة واملأ البيانات بالكلام. كل البيانات محفوظة محليا، ولو سجلت Google سيتم رفع نسخة تلقائيا.");
     }
 
     private void showSalaries() {
@@ -441,8 +468,8 @@ public class MainActivity extends Activity {
     private void card(String title, String body) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(12), dp(10), dp(12), dp(10));
-        box.setBackgroundColor(Color.WHITE);
+        box.setPadding(dp(14), dp(12), dp(14), dp(12));
+        box.setBackground(rounded(CARD, Color.rgb(226, 232, 240), dp(14)));
         TextView t = new TextView(this);
         t.setText(title);
         t.setTextColor(TEXT);
@@ -457,7 +484,7 @@ public class MainActivity extends Activity {
         box.addView(t, matchWrap());
         box.addView(b, matchWrap());
         LinearLayout.LayoutParams lp = matchWrap();
-        lp.setMargins(0, dp(4), 0, dp(8));
+        lp.setMargins(0, dp(5), 0, dp(9));
         content.addView(box, lp);
     }
 
@@ -471,16 +498,36 @@ public class MainActivity extends Activity {
     }
 
     private EditText input(String hint, int inputType) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(8), dp(4), dp(8), dp(4));
+        row.setBackground(rounded(Color.WHITE, BORDER, dp(14)));
+
         EditText et = new EditText(this);
         et.setHint(hint);
         et.setTextColor(TEXT);
         et.setHintTextColor(Color.rgb(100, 116, 139));
         et.setInputType(inputType);
         et.setGravity(Gravity.RIGHT);
-        et.setSingleLine(false);
+        et.setSingleLine(true);
+        et.setMinHeight(dp(48));
+        et.setBackgroundColor(Color.TRANSPARENT);
+        row.addView(et, new LinearLayout.LayoutParams(0, -2, 1));
+
+        Button mic = new Button(this);
+        mic.setText("صوت");
+        mic.setTextSize(12);
+        mic.setTextColor(BRAND);
+        mic.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(18)));
+        mic.setOnClickListener(v -> startVoiceInput(et));
+        LinearLayout.LayoutParams micLp = new LinearLayout.LayoutParams(dp(72), dp(42));
+        micLp.setMargins(dp(6), 0, 0, 0);
+        row.addView(mic, micLp);
+
         LinearLayout.LayoutParams lp = matchWrap();
-        lp.setMargins(0, dp(3), 0, dp(3));
-        content.addView(et, lp);
+        lp.setMargins(0, dp(5), 0, dp(6));
+        content.addView(row, lp);
         return et;
     }
 
@@ -488,11 +535,20 @@ public class MainActivity extends Activity {
         Button b = new Button(this);
         b.setText(text);
         b.setTextColor(Color.WHITE);
-        b.setBackgroundColor(BRAND);
+        b.setTextSize(15);
+        b.setBackground(rounded(BRAND, BRAND, dp(14)));
         b.setOnClickListener(v -> action.run());
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(8), 0, dp(8));
         content.addView(b, lp);
+    }
+
+    private GradientDrawable rounded(int fill, int stroke, int radius) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setCornerRadius(radius);
+        drawable.setStroke(dp(1), stroke);
+        return drawable;
     }
 
     private LinearLayout.LayoutParams matchWrap() {
@@ -520,19 +576,189 @@ public class MainActivity extends Activity {
     }
 
     private double dbl(EditText et) {
-        try {
-            return Double.parseDouble(txt(et));
-        } catch (Exception e) {
-            return 0;
-        }
+        return parseNumber(txt(et));
     }
 
     private int integer(EditText et) {
-        try {
-            return Integer.parseInt(txt(et));
-        } catch (Exception e) {
-            return 0;
+        return (int) Math.round(parseNumber(txt(et)));
+    }
+
+    private void startVoiceInput(EditText target) {
+        voiceTarget = target;
+        if (Build.VERSION.SDK_INT >= 23 &&
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, RECORD_AUDIO_REQUEST);
+            return;
         }
+
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ar-EG");
+        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "اتكلم دلوقتي");
+        try {
+            startActivityForResult(intent, VOICE_REQUEST);
+        } catch (ActivityNotFoundException e) {
+            toast("خاصية الإدخال الصوتي غير متاحة على هذا الجهاز");
+        }
+    }
+
+    private String cleanVoiceText(String value, int inputType) {
+        String cleaned = normalizeDigits(value).trim();
+        int inputClass = inputType & InputType.TYPE_MASK_CLASS;
+        if (inputClass == InputType.TYPE_CLASS_NUMBER) {
+            double number = parseNumber(cleaned);
+            if (Math.rint(number) == number) return String.valueOf((long) number);
+            return String.format(Locale.US, "%.2f", number);
+        }
+        if (inputClass == InputType.TYPE_CLASS_PHONE) {
+            return cleaned.replaceAll("[^0-9+]", "");
+        }
+        if (inputClass == InputType.TYPE_CLASS_DATETIME) {
+            return cleaned.replace(" ", "").replace("/", "-");
+        }
+        return cleaned;
+    }
+
+    private double parseNumber(String value) {
+        String normalized = normalizeDigits(value)
+                .replace(",", ".")
+                .replace("جنيه", "")
+                .replace("جنيهات", "")
+                .replace("ريال", "")
+                .replace("ريالات", "")
+                .replace("طفاية", "")
+                .replace("طفايات", "")
+                .trim();
+        try {
+            String compact = normalized.replaceAll("[^0-9.\\-]", "");
+            if (!compact.isEmpty() && compact.matches("-?[0-9]+(\\.[0-9]+)?")) {
+                return Double.parseDouble(compact);
+            }
+        } catch (Exception ignored) {
+        }
+        return parseArabicWordsNumber(normalized);
+    }
+
+    private String normalizeDigits(String value) {
+        if (value == null) return "";
+        char[] out = value.toCharArray();
+        for (int i = 0; i < out.length; i++) {
+            if (out[i] >= '٠' && out[i] <= '٩') out[i] = (char) ('0' + (out[i] - '٠'));
+            else if (out[i] >= '۰' && out[i] <= '۹') out[i] = (char) ('0' + (out[i] - '۰'));
+        }
+        return new String(out)
+                .replace("أ", "ا")
+                .replace("إ", "ا")
+                .replace("آ", "ا")
+                .replace("ة", "ه");
+    }
+
+    private double parseArabicWordsNumber(String value) {
+        String cleaned = value.replace("-", " ")
+                .replace(" و", " ")
+                .replace("وال", "ال")
+                .trim();
+        if (cleaned.isEmpty()) return 0;
+
+        double total = 0;
+        double current = 0;
+        for (String token : cleaned.split("\\s+")) {
+            if (token.startsWith("و") && token.length() > 1) token = token.substring(1);
+            double small = smallArabicNumber(token);
+            if (small >= 0) {
+                current += small;
+            } else if (isHundred(token)) {
+                current = current == 0 ? 100 : current * 100;
+            } else if (isThousand(token)) {
+                total += token.equals("الفين") ? 2000 : (current == 0 ? 1 : current) * 1000;
+                current = 0;
+            } else if (isMillion(token)) {
+                total += (current == 0 ? 1 : current) * 1000000;
+                current = 0;
+            }
+        }
+        return total + current;
+    }
+
+    private double smallArabicNumber(String token) {
+        switch (token) {
+            case "صفر": return 0;
+            case "واحد":
+            case "واحده":
+            case "احد": return 1;
+            case "اثنين":
+            case "اثنان":
+            case "اتنين": return 2;
+            case "ثلاثه":
+            case "تلاته": return 3;
+            case "اربعه": return 4;
+            case "خمسه": return 5;
+            case "سته": return 6;
+            case "سبعه": return 7;
+            case "ثمانيه":
+            case "تمانيه": return 8;
+            case "تسعه": return 9;
+            case "عشره": return 10;
+            case "حداشر":
+            case "احدعشر": return 11;
+            case "اتناشر":
+            case "اثناعشر": return 12;
+            case "تلتاشر":
+            case "ثلاثتعشر": return 13;
+            case "اربعتاشر":
+            case "اربعهعشر": return 14;
+            case "خمستاشر":
+            case "خمسهعشر": return 15;
+            case "ستاشر":
+            case "ستهعشر": return 16;
+            case "سبعتاشر":
+            case "سبعهعشر": return 17;
+            case "تمنتاشر":
+            case "ثمانيهعشر": return 18;
+            case "تسعتاشر":
+            case "تسعهعشر": return 19;
+            case "عشرين": return 20;
+            case "ثلاثين":
+            case "تلاتين": return 30;
+            case "اربعين": return 40;
+            case "خمسين": return 50;
+            case "ستين": return 60;
+            case "سبعين": return 70;
+            case "ثمانين":
+            case "تمانين": return 80;
+            case "تسعين": return 90;
+            case "ميه":
+            case "مئه":
+            case "مائه": return 100;
+            case "مئتين":
+            case "ميتين": return 200;
+            case "تلتميه":
+            case "ثلاثميه": return 300;
+            case "ربعمية":
+            case "اربعمية":
+            case "اربعميه": return 400;
+            case "خمسمية":
+            case "خمسميه": return 500;
+            case "ستميه":
+            case "ستمائه": return 600;
+            case "سبعميه": return 700;
+            case "تمنميه":
+            case "ثمانميه": return 800;
+            case "تسعميه": return 900;
+            default: return -1;
+        }
+    }
+
+    private boolean isHundred(String token) {
+        return token.equals("مئه") || token.equals("مائه") || token.equals("ميه");
+    }
+
+    private boolean isThousand(String token) {
+        return token.equals("الف") || token.equals("الاف") || token.equals("الفين");
+    }
+
+    private boolean isMillion(String token) {
+        return token.equals("مليون") || token.equals("ملايين");
     }
 
     private String val(Cursor c, String column) {
