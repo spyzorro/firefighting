@@ -14,7 +14,7 @@ import java.util.List;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String DB_NAME = "fire_salary_manager.db";
-    public static final int DB_VERSION = 2;
+    public static final int DB_VERSION = 3;
 
     private static final List<String> TABLES = Arrays.asList(
             "employees", "advances", "customers", "extinguishers",
@@ -65,6 +65,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (oldVersion < 2) {
             addColumnIfMissing(db, "safety_certificates", "total_price", "REAL DEFAULT 0");
             addColumnIfMissing(db, "technical_reports", "total_price", "REAL DEFAULT 0");
+            createSettings(db);
+        }
+        if (oldVersion < 3) {
             createSettings(db);
         }
     }
@@ -148,6 +151,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         insertDefaultSetting(db, "extinguisher_percent", "25");
         insertDefaultSetting(db, "certificate_percent", "0");
         insertDefaultSetting(db, "report_percent", "0");
+        insertDefaultSetting(db, "selected_whatsapp_template", "0");
+        insertDefaultSetting(db, "whatsapp_templates",
+                "تحياتنا لك {name}\nنذكركم بأن موعد انتهاء شهادة/استيكر الطفايات قرب، ونحتاج نحدد معكم موعد زيارة مناسب لصيانة الطفايات والتأكد من جاهزيتها.\nيعطيكم العافية.|||" +
+                        "تحياتنا {name}\nحبيت أذكركم بقرب موعد صيانة الطفايات وتجديد المتابعة، فضلا زودونا بالوقت المناسب للزيارة.\nشاكرين تعاونكم.|||" +
+                        "تحياتنا لكم\nموعد متابعة طفايات الحريق قرب، ونحتاج ترتيب زيارة صيانة في أقرب وقت يناسبكم.\nمع خالص الشكر.");
     }
 
     private void insertDefaultSetting(SQLiteDatabase db, String key, String value) {

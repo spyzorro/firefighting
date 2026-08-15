@@ -39,9 +39,11 @@ public class MainActivity extends Activity {
     private static final int VOICE_REQUEST = 5042;
     private static final int RECORD_AUDIO_REQUEST = 5043;
     private static final int LOCATION_REQUEST = 5044;
-    private static final int BRAND = Color.rgb(15, 118, 110);
-    private static final int BRAND_LIGHT = Color.rgb(204, 251, 241);
-    private static final int BG = Color.rgb(239, 246, 245);
+    private static final int BRAND = Color.rgb(220, 38, 38);
+    private static final int BRAND_DARK = Color.rgb(127, 29, 29);
+    private static final int BRAND_LIGHT = Color.rgb(254, 226, 226);
+    private static final int ACCENT = Color.rgb(245, 158, 11);
+    private static final int BG = Color.rgb(255, 247, 237);
     private static final int CARD = Color.rgb(255, 255, 255);
     private static final int BORDER = Color.rgb(203, 213, 225);
     private static final int TEXT = Color.rgb(15, 23, 42);
@@ -108,16 +110,16 @@ public class MainActivity extends Activity {
         root.setPadding(dp(14), dp(14), dp(14), dp(10));
 
         TextView title = new TextView(this);
-        title.setText("إدارة الطفايات والمرتبات");
+        title.setText("إدارة السلامة والطفايات");
         title.setTextSize(25);
-        title.setTextColor(TEXT);
+        title.setTextColor(BRAND_DARK);
         title.setGravity(Gravity.RIGHT);
         title.setTypeface(null, 1);
         root.addView(title, matchWrap());
 
         TextView sub = new TextView(this);
-        sub.setText("تسجيل، تنبيهات، تقرير شهري، ومزامنة Google");
-        sub.setTextColor(Color.rgb(71, 85, 105));
+        sub.setText("عملاء، طفايات، واتساب، تنبيهات، ومزامنة Google");
+        sub.setTextColor(Color.rgb(120, 53, 15));
         sub.setGravity(Gravity.RIGHT);
         sub.setTextSize(14);
         root.addView(sub, matchWrap());
@@ -152,7 +154,7 @@ public class MainActivity extends Activity {
         b.setText(text);
         b.setTextColor(Color.WHITE);
         b.setTextSize(14);
-        b.setBackground(rounded(BRAND, BRAND, dp(20)));
+        b.setBackground(rounded(BRAND, BRAND_DARK, dp(20)));
         b.setOnClickListener(listener);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
         lp.setMargins(dp(4), dp(10), dp(4), dp(6));
@@ -167,6 +169,8 @@ public class MainActivity extends Activity {
         int count = (int) singleDouble("SELECT COALESCE(SUM(count),0) FROM extinguishers");
         int customers = (int) singleDouble("SELECT COUNT(*) FROM customers");
         int maintenance = (int) singleDouble("SELECT COUNT(*) FROM maintenance_contracts");
+        card("لوحة المتابعة",
+                "كل شغلك في مكان واحد: تسجيل سريع بالصوت، فتح خرائط، رسالة واتساب جاهزة للعميل، ونسب شهرية قابلة للتعديل.");
         card("إجمالي الطفايات", count + " طفاية");
         card("إجمالي مبلغ الطفايات", money(total));
         card("العملاء المسجلين", customers + " عميل");
@@ -349,6 +353,7 @@ public class MainActivity extends Activity {
                                 "\nلوكيشن: " + safe(oldLocation) +
                                 "\nإجمالي الطفايات: " + c.getInt(3) +
                                 "\nإجمالي المبلغ: " + money(c.getDouble(4)));
+                secondaryButton("رسالة واتساب للعميل", () -> sendWhatsApp(oldPhone, oldName));
                 EditText name = input("تعديل اسم العميل", InputType.TYPE_CLASS_TEXT);
                 name.setText(oldName);
                 EditText phone = input("تعديل رقم العميل", InputType.TYPE_CLASS_PHONE);
@@ -525,6 +530,31 @@ public class MainActivity extends Activity {
             showSettings();
         });
         small("كل نسبة تتحسب في تقرير الشهر على إجمالي مبلغ البند الخاص بها.");
+
+        section("رسائل واتساب");
+        String[] templates = whatsappTemplates();
+        int selected = selectedWhatsappTemplateIndex(templates.length);
+        for (int i = 0; i < templates.length; i++) {
+            card((i + 1) + (i == selected ? " - الرسالة المختارة" : " - رسالة واتساب"),
+                    templates[i].replace("{name}", "اسم العميل"));
+            final int index = i;
+            secondaryButton("اختيار الرسالة " + (i + 1), () -> {
+                db.setSetting("selected_whatsapp_template", String.valueOf(index));
+                afterSave("تم اختيار رسالة واتساب");
+                showSettings();
+            });
+        }
+        EditText newTemplate = input("إضافة رسالة واتساب جديدة", InputType.TYPE_CLASS_TEXT);
+        newTemplate.setSingleLine(false);
+        newTemplate.setMinLines(3);
+        small("استخدم {name} داخل الرسالة لو عايز اسم العميل يظهر تلقائيا.");
+        button("إضافة الرسالة", () -> {
+            if (empty(newTemplate)) return;
+            db.setSetting("whatsapp_templates", joinTemplates(appendTemplate(templates, txt(newTemplate))));
+            db.setSetting("selected_whatsapp_template", String.valueOf(templates.length));
+            afterSave("تمت إضافة الرسالة واختيارها");
+            showSettings();
+        });
     }
 
     private void showSync() {
@@ -591,7 +621,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(14), dp(12), dp(14), dp(12));
-        box.setBackground(rounded(CARD, Color.rgb(226, 232, 240), dp(14)));
+        box.setBackground(rounded(CARD, Color.rgb(254, 202, 202), dp(14)));
         TextView t = new TextView(this);
         t.setText(title);
         t.setTextColor(TEXT);
@@ -609,7 +639,7 @@ public class MainActivity extends Activity {
         if (mapLink != null) {
             Button open = new Button(this);
             open.setText("فتح اللوكيشن");
-            open.setTextColor(BRAND);
+            open.setTextColor(BRAND_DARK);
             open.setTextSize(13);
             open.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(14)));
             open.setOnClickListener(v -> openLocation(mapLink));
@@ -624,25 +654,115 @@ public class MainActivity extends Activity {
 
     private String extractMapLink(String text) {
         if (text == null) return null;
-        for (String part : text.split("\\s+")) {
-            String cleaned = part.trim().replace("،", "").replace(",", "");
+        Matcher matcher = Pattern.compile("(https?://\\S+|geo:\\S+)").matcher(text);
+        while (matcher.find()) {
+            String cleaned = matcher.group(1).trim();
+            while (cleaned.endsWith(".") || cleaned.endsWith("،") || cleaned.endsWith(";")) {
+                cleaned = cleaned.substring(0, cleaned.length() - 1);
+            }
             if (cleaned.startsWith("https://www.google.com/maps") ||
                     cleaned.startsWith("http://www.google.com/maps") ||
                     cleaned.startsWith("https://maps.google.com") ||
-                    cleaned.startsWith("geo:")) {
-                return cleaned;
-            }
+                    cleaned.startsWith("https://maps.app.goo.gl") ||
+                    cleaned.startsWith("geo:")) return cleaned;
+        }
+        Matcher coordinates = Pattern.compile("(-?\\d{1,3}\\.\\d+\\s*,\\s*-?\\d{1,3}\\.\\d+)").matcher(text);
+        if (coordinates.find()) {
+            String value = coordinates.group(1).replace(" ", "");
+            return "geo:" + value + "?q=" + Uri.encode(value);
         }
         return null;
     }
 
     private void openLocation(String link) {
         try {
-            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(link));
-            startActivity(intent);
+            Uri uri = normalizeMapUri(link);
+            Intent maps = new Intent(Intent.ACTION_VIEW, uri);
+            maps.setPackage("com.google.android.apps.maps");
+            try {
+                startActivity(maps);
+            } catch (ActivityNotFoundException e) {
+                startActivity(new Intent(Intent.ACTION_VIEW, uri));
+            }
         } catch (Exception e) {
             toast("تعذر فتح اللوكيشن");
         }
+    }
+
+    private Uri normalizeMapUri(String link) {
+        if (link.startsWith("geo:")) return Uri.parse(link);
+        Uri uri = Uri.parse(link);
+        String value = uri.getQueryParameter("query");
+        if (value != null && value.matches("-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?")) {
+            return Uri.parse("geo:" + value + "?q=" + Uri.encode(value));
+        }
+        return uri;
+    }
+
+    private void sendWhatsApp(String phone, String customerName) {
+        String normalizedPhone = normalizePhone(phone);
+        if (normalizedPhone.isEmpty()) {
+            toast("رقم العميل غير مسجل");
+            return;
+        }
+        String[] templates = whatsappTemplates();
+        int selected = selectedWhatsappTemplateIndex(templates.length);
+        String message = templates[selected].replace("{name}", safe(customerName));
+        Uri uri = Uri.parse("https://wa.me/" + normalizedPhone + "?text=" + Uri.encode(message));
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, uri));
+        } catch (Exception e) {
+            toast("تعذر فتح واتساب");
+        }
+    }
+
+    private String normalizePhone(String phone) {
+        if (phone == null) return "";
+        String digits = normalizeDigits(phone).replaceAll("[^0-9]", "");
+        while (digits.startsWith("00")) digits = digits.substring(2);
+        if (digits.length() == 10 && digits.startsWith("05")) return "966" + digits.substring(1);
+        if (digits.length() == 9 && digits.startsWith("5")) return "966" + digits;
+        return digits;
+    }
+
+    private String[] whatsappTemplates() {
+        String raw = db.setting("whatsapp_templates", defaultWhatsappTemplates());
+        String[] parts = raw.split("\\|\\|\\|");
+        ArrayList<String> clean = new ArrayList<>();
+        for (String part : parts) {
+            String value = part.trim();
+            if (!value.isEmpty()) clean.add(value);
+        }
+        if (clean.isEmpty()) clean.add(defaultWhatsappTemplates().split("\\|\\|\\|")[0]);
+        return clean.toArray(new String[0]);
+    }
+
+    private int selectedWhatsappTemplateIndex(int size) {
+        int selected = (int) Math.round(parseNumber(db.setting("selected_whatsapp_template", "0")));
+        if (selected < 0 || selected >= size) return 0;
+        return selected;
+    }
+
+    private String[] appendTemplate(String[] templates, String value) {
+        String[] next = new String[templates.length + 1];
+        System.arraycopy(templates, 0, next, 0, templates.length);
+        next[templates.length] = value;
+        return next;
+    }
+
+    private String joinTemplates(String[] templates) {
+        StringBuilder out = new StringBuilder();
+        for (String template : templates) {
+            if (out.length() > 0) out.append("|||");
+            out.append(template.replace("|||", " "));
+        }
+        return out.toString();
+    }
+
+    private String defaultWhatsappTemplates() {
+        return "تحياتنا لك {name}\nنذكركم بأن موعد انتهاء شهادة/استيكر الطفايات قرب، ونحتاج نحدد معكم موعد زيارة مناسب لصيانة الطفايات والتأكد من جاهزيتها.\nيعطيكم العافية.|||" +
+                "تحياتنا {name}\nحبيت أذكركم بقرب موعد صيانة الطفايات وتجديد المتابعة، فضلا زودونا بالوقت المناسب للزيارة.\nشاكرين تعاونكم.|||" +
+                "تحياتنا لكم\nموعد متابعة طفايات الحريق قرب، ونحتاج ترتيب زيارة صيانة في أقرب وقت يناسبكم.\nمع خالص الشكر.";
     }
 
     private void small(String text) {
@@ -652,6 +772,18 @@ public class MainActivity extends Activity {
         tv.setGravity(Gravity.RIGHT);
         tv.setTextSize(14);
         content.addView(tv, matchWrap());
+    }
+
+    private void secondaryButton(String text, Runnable action) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setTextColor(BRAND_DARK);
+        b.setTextSize(14);
+        b.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(14)));
+        b.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(3), 0, dp(8));
+        content.addView(b, lp);
     }
 
     private EditText input(String hint, int inputType) {
