@@ -9,6 +9,9 @@ import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.speech.RecognizerIntent;
@@ -32,6 +35,7 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private static final int VOICE_REQUEST = 5042;
     private static final int RECORD_AUDIO_REQUEST = 5043;
+    private static final int LOCATION_REQUEST = 5044;
     private static final int BRAND = Color.rgb(15, 118, 110);
     private static final int BRAND_LIGHT = Color.rgb(204, 251, 241);
     private static final int BG = Color.rgb(239, 246, 245);
@@ -44,6 +48,7 @@ public class MainActivity extends Activity {
     private LinearLayout content;
     private EditText voiceTarget;
     private EditText[] voiceGroup;
+    private EditText locationTarget;
     private String currentTab = "home";
 
     @Override
@@ -83,6 +88,13 @@ public class MainActivity extends Activity {
                 grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             if (voiceGroup != null && voiceGroup.length > 0) startVoiceGroupInput(voiceGroup);
             else if (voiceTarget != null) startVoiceInput(voiceTarget);
+        } else if (requestCode == LOCATION_REQUEST && locationTarget != null) {
+            boolean granted = false;
+            for (int result : grantResults) {
+                if (result == PackageManager.PERMISSION_GRANTED) granted = true;
+            }
+            if (granted) fillCurrentLocation(locationTarget);
+            else toast("لازم تسمح للتطبيق باستخدام الموقع علشان زر موقعي يشتغل");
         }
     }
 
@@ -155,7 +167,7 @@ public class MainActivity extends Activity {
         card("إجمالي مبلغ الطفايات", money(total));
         card("العملاء المسجلين", customers + " عميل");
         card("عقود الصيانة", maintenance + " عقد");
-        small("ابدأ من أي تبويب بالأعلى. اضغط زر صوت بجانب أي خانة واملأ البيانات بالكلام. كل البيانات محفوظة محليا، ولو سجلت Google سيتم رفع نسخة تلقائيا.");
+        small("ابدأ من أي تبويب بالأعلى. اضغط صوت للإدخال بالكلام، أو موقعي بجانب اللوكيشن لحفظ رابط Google Maps الحالي. كل البيانات محفوظة محليا، ولو سجلت Google سيتم رفع نسخة تلقائيا.");
     }
 
     private void showSalaries() {
@@ -230,7 +242,7 @@ public class MainActivity extends Activity {
         EditText price = input("إجمالي مبلغ الطفايات", numberType());
         EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
-        voiceAllButton("قول كل بيانات الطفايات مرة واحدة", customer, phone, location, type, weight, count, price, date);
+        voiceAllButton("قول كل بيانات الطفايات مرة واحدة", customer, location, type, weight, count, price, date);
         button("حفظ الطفايات وجدولة التذكير", () -> {
             if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
             try {
@@ -318,7 +330,7 @@ public class MainActivity extends Activity {
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
         EditText date = input("تاريخ البداية yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
-        voiceAllButton("قول كل البيانات مرة واحدة", customer, phone, location, date);
+        voiceAllButton("قول كل البيانات مرة واحدة", customer, location, date);
         button(buttonText, () -> {
             if (empty(customer) || empty(date)) return;
             try {
@@ -349,7 +361,7 @@ public class MainActivity extends Activity {
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
         EditText start = input("تاريخ بداية العقد yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         start.setText(today());
-        voiceAllButton("قول بيانات عقد الصيانة مرة واحدة", customer, phone, location, start);
+        voiceAllButton("قول بيانات عقد الصيانة مرة واحدة", customer, location, start);
         button("حفظ عقد الصيانة", () -> {
             if (empty(customer) || empty(start)) return;
             try {
@@ -527,15 +539,30 @@ public class MainActivity extends Activity {
         et.setBackgroundColor(Color.TRANSPARENT);
         row.addView(et, new LinearLayout.LayoutParams(0, -2, 1));
 
-        Button mic = new Button(this);
-        mic.setText("صوت");
-        mic.setTextSize(12);
-        mic.setTextColor(BRAND);
-        mic.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(18)));
-        mic.setOnClickListener(v -> startVoiceInput(et));
-        LinearLayout.LayoutParams micLp = new LinearLayout.LayoutParams(dp(72), dp(42));
-        micLp.setMargins(dp(6), 0, 0, 0);
-        row.addView(mic, micLp);
+        if (hint.contains("لوكيشن")) {
+            Button current = new Button(this);
+            current.setText("موقعي");
+            current.setTextSize(12);
+            current.setTextColor(BRAND);
+            current.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(18)));
+            current.setOnClickListener(v -> fillCurrentLocation(et));
+            LinearLayout.LayoutParams locLp = new LinearLayout.LayoutParams(dp(78), dp(42));
+            locLp.setMargins(dp(6), 0, 0, 0);
+            row.addView(current, locLp);
+        }
+
+        int inputClass = inputType & InputType.TYPE_MASK_CLASS;
+        if (inputClass != InputType.TYPE_CLASS_PHONE) {
+            Button mic = new Button(this);
+            mic.setText("صوت");
+            mic.setTextSize(12);
+            mic.setTextColor(BRAND);
+            mic.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(18)));
+            mic.setOnClickListener(v -> startVoiceInput(et));
+            LinearLayout.LayoutParams micLp = new LinearLayout.LayoutParams(dp(72), dp(42));
+            micLp.setMargins(dp(6), 0, 0, 0);
+            row.addView(mic, micLp);
+        }
 
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(5), 0, dp(6));
@@ -565,6 +592,90 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(3), 0, dp(8));
         content.addView(b, lp);
+    }
+
+    private void fillCurrentLocation(EditText target) {
+        locationTarget = target;
+        if (!hasLocationPermission()) {
+            requestPermissions(new String[]{
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+            }, LOCATION_REQUEST);
+            return;
+        }
+
+        LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        if (manager == null) {
+            toast("خدمة الموقع غير متاحة على الجهاز");
+            return;
+        }
+
+        Location best = bestLastKnownLocation(manager);
+        if (best != null) {
+            setLocationLink(target, best);
+        }
+
+        String provider = manager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+                ? LocationManager.GPS_PROVIDER
+                : (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ? LocationManager.NETWORK_PROVIDER : null);
+        if (provider == null) {
+            toast("افتح GPS/Location من إعدادات الموبايل ثم اضغط موقعي");
+            return;
+        }
+
+        try {
+            manager.requestSingleUpdate(provider, new LocationListener() {
+                @Override
+                public void onLocationChanged(Location location) {
+                    setLocationLink(target, location);
+                }
+
+                @Override
+                public void onStatusChanged(String provider, int status, Bundle extras) {
+                }
+
+                @Override
+                public void onProviderEnabled(String provider) {
+                }
+
+                @Override
+                public void onProviderDisabled(String provider) {
+                }
+            }, null);
+            toast(best == null ? "جاري تحديد الموقع..." : "تم وضع أقرب موقع، وجاري تحسين الدقة");
+        } catch (SecurityException e) {
+            toast("اسمح للتطبيق باستخدام الموقع");
+        } catch (Exception e) {
+            if (best == null) toast("تعذر تحديد الموقع الحالي");
+        }
+    }
+
+    private Location bestLastKnownLocation(LocationManager manager) {
+        Location best = null;
+        try {
+            for (String provider : manager.getProviders(true)) {
+                Location location = manager.getLastKnownLocation(provider);
+                if (location == null) continue;
+                if (best == null || location.getAccuracy() < best.getAccuracy()) best = location;
+            }
+        } catch (SecurityException ignored) {
+        }
+        return best;
+    }
+
+    private boolean hasLocationPermission() {
+        return Build.VERSION.SDK_INT < 23 ||
+                checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void setLocationLink(EditText target, Location location) {
+        String link = String.format(Locale.US,
+                "https://www.google.com/maps/search/?api=1&query=%.7f,%.7f",
+                location.getLatitude(), location.getLongitude());
+        target.setText(link);
+        target.setSelection(target.getText().length());
+        toast("تم حفظ لينك اللوكيشن الحالي");
     }
 
     private GradientDrawable rounded(int fill, int stroke, int radius) {
