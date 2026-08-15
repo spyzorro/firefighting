@@ -31,6 +31,8 @@ import com.google.firebase.auth.FirebaseUser;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
     private static final int VOICE_REQUEST = 5042;
@@ -242,7 +244,8 @@ public class MainActivity extends Activity {
         EditText price = input("إجمالي مبلغ الطفايات", numberType());
         EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
-        voiceAllButton("قول كل بيانات الطفايات مرة واحدة", customer, location, type, weight, count, price, date);
+        voiceAllButton("تسجيل سريع بالصوت: قول بيانات الطفايات مرة واحدة", customer, location, type, weight, count, price, date);
+        small("مثال: محمد 20 طفاية بودرة co2 120 ريال. رقم الموبايل اكتبه عادي، واللوكيشن اضغط موقعي.");
         button("حفظ الطفايات وجدولة التذكير", () -> {
             if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
             try {
@@ -769,6 +772,9 @@ public class MainActivity extends Activity {
             field.setSelection(field.getText().length());
             assigned++;
         }
+        if (assigned == 0 && smartExtinguisherFill(normalized, fields)) {
+            assigned = fields.length;
+        }
         if (assigned == 0) {
             String[] parts = normalized.split("[،,؛\\n]+");
             int max = Math.min(parts.length, fields.length);
@@ -780,6 +786,181 @@ public class MainActivity extends Activity {
             }
         }
         toast("تم توزيع البيانات الصوتية على الخانات");
+    }
+
+    private boolean smartExtinguisherFill(String text, EditText[] fields) {
+        EditText customer = fieldByHint(fields, "اسم العميل");
+        EditText type = fieldByHint(fields, "نوع الطفاية");
+        EditText weight = fieldByHint(fields, "وزن الطفاية");
+        EditText count = fieldByHint(fields, "عدد الطفايات");
+        EditText price = fieldByHint(fields, "إجمالي مبلغ الطفايات");
+        if (customer == null || type == null || count == null || price == null) return false;
+
+        String normalized = normalizeDigits(text);
+        NumberMention countMention = findNumberBeforeUnit(normalized, new String[]{"طفايه", "طفاية", "طفايات"});
+        NumberMention priceMention = findNumberBeforeUnit(normalized, new String[]{"ريال", "ريالات", "جنيه", "جنيهات"});
+        if (priceMention == null) {
+            priceMention = findLastNumberMention(normalized, countMention == null ? 0 : countMention.end);
+        }
+
+        boolean filled = false;
+        if (countMention != null) {
+            count.setText(cleanNumber(countMention.value));
+            filled = true;
+        }
+        if (priceMention != null) {
+            price.setText(cleanNumber(priceMention.value));
+            filled = true;
+        }
+
+        int firstNumberStart = countMention != null ? countMention.start : (priceMention != null ? priceMention.start : -1);
+        if (firstNumberStart > 0) {
+            String name = trimSeparators(normalized.substring(0, firstNumberStart));
+            if (!name.isEmpty()) {
+                customer.setText(name);
+                filled = true;
+            }
+        }
+
+        int typeStart = countMention == null ? 0 : endAfterAnyUnit(normalized, countMention.end,
+                new String[]{"طفايه", "طفاية", "طفايات"});
+        int typeEnd = priceMention == null ? normalized.length() : priceMention.start;
+        if (typeEnd > typeStart) {
+            String typeText = trimSeparators(normalized.substring(typeStart, typeEnd));
+            NumberMention weightMention = findNumberBeforeUnit(typeText, new String[]{"كيلو", "كجم", "kg"});
+            if (weightMention != null && weight != null) {
+                int unitEnd = endAfterAnyUnit(typeText, weightMention.end, new String[]{"كيلو", "كجم", "kg"});
+                String weightText = trimSeparators(typeText.substring(weightMention.start, unitEnd));
+                weight.setText(weightText);
+                typeText = trimSeparators(typeText.substring(0, weightMention.start) + " " + typeText.substring(unitEnd));
+            }
+            typeText = typeText
+                    .replace("طفايه", "")
+                    .replace("طفاية", "")
+                    .replace("طفايات", "")
+                    .replace("ريال", "")
+                    .replace("ريالات", "")
+                    .trim();
+            if (!typeText.isEmpty()) {
+                type.setText(typeText);
+                filled = true;
+            }
+        }
+
+        for (EditText field : fields) field.setSelection(field.getText().length());
+        return filled;
+    }
+
+    private EditText fieldByHint(EditText[] fields, String hintPart) {
+        for (EditText field : fields) {
+            if (String.valueOf(field.getHint()).contains(hintPart)) return field;
+        }
+        return null;
+    }
+
+    private String cleanNumber(double value) {
+        if (Math.rint(value) == value) return String.valueOf((long) value);
+        return String.format(Locale.US, "%.2f", value);
+    }
+
+    private int endAfterAnyUnit(String text, int from, String[] units) {
+        int best = -1;
+        int bestLength = 0;
+        for (String unit : units) {
+            int idx = text.indexOf(unit, from);
+            if (idx >= 0 && (best < 0 || idx < best)) {
+                best = idx;
+                bestLength = unit.length();
+            }
+        }
+        return best < 0 ? from : best + bestLength;
+    }
+
+    private NumberMention findNumberBeforeUnit(String text, String[] units) {
+        ArrayList<TokenPos> tokens = tokenPositions(text);
+        for (int i = 0; i < tokens.size(); i++) {
+            if (!isAnyUnit(tokens.get(i).clean, units)) continue;
+            int startToken = i - 1;
+            while (startToken >= 0 && isNumberToken(tokens.get(startToken).clean)) startToken--;
+            startToken++;
+            if (startToken < i) {
+                String phrase = text.substring(tokens.get(startToken).start, tokens.get(i - 1).end);
+                double value = parseNumber(phrase);
+                if (value > 0) return new NumberMention(value, tokens.get(startToken).start, tokens.get(i - 1).end);
+            }
+        }
+        return null;
+    }
+
+    private NumberMention findLastNumberMention(String text, int from) {
+        ArrayList<TokenPos> tokens = tokenPositions(text);
+        NumberMention last = null;
+        int i = 0;
+        while (i < tokens.size()) {
+            if (tokens.get(i).end < from || !isNumberToken(tokens.get(i).clean)) {
+                i++;
+                continue;
+            }
+            int start = i;
+            while (i < tokens.size() && isNumberToken(tokens.get(i).clean)) i++;
+            String phrase = text.substring(tokens.get(start).start, tokens.get(i - 1).end);
+            double value = parseNumber(phrase);
+            if (value > 0) last = new NumberMention(value, tokens.get(start).start, tokens.get(i - 1).end);
+        }
+        return last;
+    }
+
+    private ArrayList<TokenPos> tokenPositions(String text) {
+        ArrayList<TokenPos> result = new ArrayList<>();
+        Matcher matcher = Pattern.compile("\\S+").matcher(text);
+        while (matcher.find()) {
+            String raw = matcher.group();
+            String clean = trimSeparators(raw).toLowerCase(Locale.US);
+            result.add(new TokenPos(clean, matcher.start(), matcher.end()));
+        }
+        return result;
+    }
+
+    private boolean isAnyUnit(String token, String[] units) {
+        for (String unit : units) {
+            if (token.equals(unit)) return true;
+        }
+        return false;
+    }
+
+    private boolean isNumberToken(String token) {
+        if (token == null || token.isEmpty()) return false;
+        String clean = trimSeparators(token);
+        if (clean.startsWith("و") && clean.length() > 1) clean = clean.substring(1);
+        return clean.matches("[0-9]+(\\.[0-9]+)?") ||
+                smallArabicNumber(clean) >= 0 ||
+                isHundred(clean) ||
+                isThousand(clean) ||
+                isMillion(clean);
+    }
+
+    private static class NumberMention {
+        final double value;
+        final int start;
+        final int end;
+
+        NumberMention(double value, int start, int end) {
+            this.value = value;
+            this.start = start;
+            this.end = end;
+        }
+    }
+
+    private static class TokenPos {
+        final String clean;
+        final int start;
+        final int end;
+
+        TokenPos(String clean, int start, int end) {
+            this.clean = clean;
+            this.start = start;
+            this.end = end;
+        }
     }
 
     private String extractFieldValue(String text, String hint) {
