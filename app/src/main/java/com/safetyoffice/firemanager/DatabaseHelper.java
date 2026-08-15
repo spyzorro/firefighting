@@ -14,7 +14,7 @@ import java.util.List;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String DB_NAME = "fire_salary_manager.db";
-    public static final int DB_VERSION = 3;
+    public static final int DB_VERSION = 4;
 
     private static final List<String> TABLES = Arrays.asList(
             "employees", "advances", "customers", "extinguishers",
@@ -69,6 +69,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
         if (oldVersion < 3) {
             createSettings(db);
+        }
+        if (oldVersion < 4) {
+            createSettings(db);
+            replaceWhatsappTemplatesIfMissingCount(db);
         }
     }
 
@@ -152,10 +156,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         insertDefaultSetting(db, "certificate_percent", "0");
         insertDefaultSetting(db, "report_percent", "0");
         insertDefaultSetting(db, "selected_whatsapp_template", "0");
-        insertDefaultSetting(db, "whatsapp_templates",
-                "تحياتنا لك {name}\nنذكركم بأن موعد انتهاء شهادة/استيكر الطفايات قرب، ونحتاج نحدد معكم موعد زيارة مناسب لصيانة الطفايات والتأكد من جاهزيتها.\nيعطيكم العافية.|||" +
-                        "تحياتنا {name}\nحبيت أذكركم بقرب موعد صيانة الطفايات وتجديد المتابعة، فضلا زودونا بالوقت المناسب للزيارة.\nشاكرين تعاونكم.|||" +
-                        "تحياتنا لكم\nموعد متابعة طفايات الحريق قرب، ونحتاج ترتيب زيارة صيانة في أقرب وقت يناسبكم.\nمع خالص الشكر.");
+        insertDefaultSetting(db, "whatsapp_templates", defaultWhatsappTemplates());
     }
 
     private void insertDefaultSetting(SQLiteDatabase db, String key, String value) {
@@ -163,6 +164,26 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         cv.put("key", key);
         cv.put("value", value);
         db.insertWithOnConflict("settings", null, cv, SQLiteDatabase.CONFLICT_IGNORE);
+    }
+
+    private void replaceWhatsappTemplatesIfMissingCount(SQLiteDatabase db) {
+        Cursor c = db.query("settings", new String[]{"value"}, "key=?",
+                new String[]{"whatsapp_templates"}, null, null, null);
+        try {
+            if (c.moveToFirst() && safe(c.getString(0)).contains("{count}")) return;
+        } finally {
+            c.close();
+        }
+        ContentValues cv = new ContentValues();
+        cv.put("key", "whatsapp_templates");
+        cv.put("value", defaultWhatsappTemplates());
+        db.insertWithOnConflict("settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    private String defaultWhatsappTemplates() {
+        return "تحياتنا وتقديرنا لك {name}\nحبيت أذكركم إن موعد انتهاء شهادة/استيكر الطفايات قرب، وعدد الطفايات المسجلة عندكم {count} طفاية. ودي فرصة نرتب زيارة صيانة في الوقت اللي يناسبكم عشان نتأكد إن كل شي جاهز وآمن.\nالله يعطيكم العافية.|||" +
+                "تحياتنا لك {name}\nنذكركم بقرب موعد متابعة الطفايات، وعددها عندكم {count} طفاية. فضلا حددوا لنا وقت مناسب للزيارة والصيانة، وبإذن الله نخدمكم بالشكل اللي يرضيكم.\nشاكرين لكم تعاونكم.|||" +
+                "تحياتنا وتقديرنا\nعندكم {count} طفاية مسجلة لدينا، وموعد شهادة/استيكر الطفايات قرب ينتهي. نحتاج ننسق معكم موعد زيارة صيانة مناسب، وربي يبارك لكم.";
     }
 
     private void addColumnIfMissing(SQLiteDatabase db, String table, String column, String definition) {

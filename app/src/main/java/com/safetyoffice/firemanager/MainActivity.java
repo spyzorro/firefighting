@@ -39,11 +39,11 @@ public class MainActivity extends Activity {
     private static final int VOICE_REQUEST = 5042;
     private static final int RECORD_AUDIO_REQUEST = 5043;
     private static final int LOCATION_REQUEST = 5044;
-    private static final int BRAND = Color.rgb(220, 38, 38);
-    private static final int BRAND_DARK = Color.rgb(127, 29, 29);
-    private static final int BRAND_LIGHT = Color.rgb(254, 226, 226);
-    private static final int ACCENT = Color.rgb(245, 158, 11);
-    private static final int BG = Color.rgb(255, 247, 237);
+    private static final int BRAND = Color.rgb(185, 28, 28);
+    private static final int BRAND_DARK = Color.rgb(69, 10, 10);
+    private static final int BRAND_LIGHT = Color.rgb(254, 242, 242);
+    private static final int ACCENT = Color.rgb(249, 115, 22);
+    private static final int BG = Color.rgb(248, 250, 252);
     private static final int CARD = Color.rgb(255, 255, 255);
     private static final int BORDER = Color.rgb(203, 213, 225);
     private static final int TEXT = Color.rgb(15, 23, 42);
@@ -152,9 +152,10 @@ public class MainActivity extends Activity {
     private void addTab(LinearLayout tabs, String text, View.OnClickListener listener) {
         Button b = new Button(this);
         b.setText(text);
-        b.setTextColor(Color.WHITE);
+        b.setTextColor(BRAND_DARK);
         b.setTextSize(14);
-        b.setBackground(rounded(BRAND, BRAND_DARK, dp(20)));
+        b.setAllCaps(false);
+        b.setBackground(rounded(Color.WHITE, Color.rgb(254, 202, 202), dp(18)));
         b.setOnClickListener(listener);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
         lp.setMargins(dp(4), dp(10), dp(4), dp(6));
@@ -348,28 +349,105 @@ public class MainActivity extends Activity {
                 String oldName = c.getString(0);
                 String oldPhone = emptyForDb(c.getString(1));
                 String oldLocation = emptyForDb(c.getString(2));
+                int extinguisherCount = c.getInt(3);
+                double totalPrice = c.getDouble(4);
                 card(oldName,
                         "رقم: " + safe(oldPhone) +
                                 "\nلوكيشن: " + safe(oldLocation) +
-                                "\nإجمالي الطفايات: " + c.getInt(3) +
-                                "\nإجمالي المبلغ: " + money(c.getDouble(4)));
-                secondaryButton("رسالة واتساب للعميل", () -> sendWhatsApp(oldPhone, oldName));
-                EditText name = input("تعديل اسم العميل", InputType.TYPE_CLASS_TEXT);
-                name.setText(oldName);
-                EditText phone = input("تعديل رقم العميل", InputType.TYPE_CLASS_PHONE);
-                phone.setText(oldPhone);
-                EditText location = input("تعديل اللوكيشن", InputType.TYPE_CLASS_TEXT);
-                location.setText(oldLocation);
-                button("حفظ تعديل العميل", () -> {
-                    if (empty(name)) return;
-                    db.updateCustomerEverywhere(oldName, oldPhone, oldLocation, txt(name), txt(phone), txt(location));
-                    afterSave("تم تعديل بيانات العميل في كل السجلات");
-                    showCustomers();
-                });
+                                "\nإجمالي الطفايات: " + extinguisherCount +
+                                "\nإجمالي المبلغ: " + money(totalPrice));
+                secondaryButton("تعديل بيانات العميل", () -> showCustomerDetails(oldName, oldPhone, oldLocation, extinguisherCount, totalPrice));
+                secondaryButton("رسالة واتساب للعميل", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
             }
         } finally {
             c.close();
         }
+    }
+
+    private void showCustomerDetails(String oldName, String oldPhone, String oldLocation,
+                                     int extinguisherCount, double totalPrice) {
+        currentTab = "customer_detail";
+        clear();
+        section("صفحة العميل");
+        card(oldName,
+                "رقم: " + safe(oldPhone) +
+                        "\nلوكيشن: " + safe(oldLocation) +
+                        "\nإجمالي الطفايات: " + extinguisherCount +
+                        "\nإجمالي المبلغ: " + money(totalPrice));
+        secondaryButton("رسالة واتساب جاهزة", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
+        secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
+
+        section("تعديل بيانات العميل");
+        EditText name = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
+        name.setText(oldName);
+        EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
+        phone.setText(oldPhone);
+        EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
+        location.setText(oldLocation);
+        button("حفظ وإغلاق صفحة العميل", () -> {
+            if (empty(name)) return;
+            db.updateCustomerEverywhere(oldName, oldPhone, oldLocation, txt(name), txt(phone), txt(location));
+            afterSave("تم حفظ بيانات العميل والرجوع للقائمة");
+            showCustomers();
+        });
+        secondaryButton("إغلاق بدون حفظ", this::showCustomers);
+
+        section("كل بيانات العميل");
+        listCustomerRecords(oldName, oldPhone, oldLocation);
+    }
+
+    private void listCustomerRecords(String name, String phone, String location) {
+        String[] args = customerArgs(name, phone, location);
+        Cursor e = db.raw("SELECT extinguisher_type, weight, count, total_price, sticker_date, reminder_at FROM extinguishers " +
+                "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
+        try {
+            while (e.moveToNext()) {
+                card("طفايات",
+                        "النوع: " + safe(e.getString(0)) +
+                                "\nالوزن: " + safe(e.getString(1)) +
+                                "\nالعدد: " + e.getInt(2) +
+                                "\nالمبلغ: " + money(e.getDouble(3)) +
+                                "\nتاريخ الاستيكر: " + ReminderScheduler.formatDate(e.getLong(4)) +
+                                "\nالتذكير: " + ReminderScheduler.formatDate(e.getLong(5)));
+            }
+        } finally {
+            e.close();
+        }
+
+        listCustomerAnnualRecords("safety_certificates", "certificate_date", "شهادة سلامة", args);
+        listCustomerAnnualRecords("technical_reports", "report_date", "تقرير فني", args);
+
+        Cursor m = db.raw("SELECT start_date, next_visit_at, reminder_at FROM maintenance_contracts " +
+                "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
+        try {
+            while (m.moveToNext()) {
+                card("عقد صيانة",
+                        "تاريخ البداية: " + ReminderScheduler.formatDate(m.getLong(0)) +
+                                "\nالزيارة القادمة: " + ReminderScheduler.formatDate(m.getLong(1)) +
+                                "\nالتذكير: " + ReminderScheduler.formatDate(m.getLong(2)));
+            }
+        } finally {
+            m.close();
+        }
+    }
+
+    private void listCustomerAnnualRecords(String table, String dateColumn, String label, String[] args) {
+        Cursor c = db.raw("SELECT " + dateColumn + ", total_price, reminder_at FROM " + table +
+                " WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
+        try {
+            while (c.moveToNext()) {
+                card(label,
+                        "التاريخ: " + ReminderScheduler.formatDate(c.getLong(0)) +
+                                "\nالمبلغ: " + money(c.getDouble(1)) +
+                                "\nالتذكير: " + ReminderScheduler.formatDate(c.getLong(2)));
+            }
+        } finally {
+            c.close();
+        }
+    }
+
+    private String[] customerArgs(String name, String phone, String location) {
+        return new String[]{name, safe(phone), safe(location)};
     }
 
     private void showCertificates() {
@@ -536,7 +614,7 @@ public class MainActivity extends Activity {
         int selected = selectedWhatsappTemplateIndex(templates.length);
         for (int i = 0; i < templates.length; i++) {
             card((i + 1) + (i == selected ? " - الرسالة المختارة" : " - رسالة واتساب"),
-                    templates[i].replace("{name}", "اسم العميل"));
+                    templates[i].replace("{name}", "اسم العميل").replace("{count}", "عدد الطفايات"));
             final int index = i;
             secondaryButton("اختيار الرسالة " + (i + 1), () -> {
                 db.setSetting("selected_whatsapp_template", String.valueOf(index));
@@ -547,7 +625,7 @@ public class MainActivity extends Activity {
         EditText newTemplate = input("إضافة رسالة واتساب جديدة", InputType.TYPE_CLASS_TEXT);
         newTemplate.setSingleLine(false);
         newTemplate.setMinLines(3);
-        small("استخدم {name} داخل الرسالة لو عايز اسم العميل يظهر تلقائيا.");
+        small("استخدم {name} لاسم العميل و {count} لعدد الطفايات داخل الرسالة.");
         button("إضافة الرسالة", () -> {
             if (empty(newTemplate)) return;
             db.setSetting("whatsapp_templates", joinTemplates(appendTemplate(templates, txt(newTemplate))));
@@ -610,10 +688,10 @@ public class MainActivity extends Activity {
         tv.setText(text);
         tv.setTextSize(19);
         tv.setTypeface(null, 1);
-        tv.setTextColor(TEXT);
+        tv.setTextColor(BRAND_DARK);
         tv.setGravity(Gravity.RIGHT);
         LinearLayout.LayoutParams lp = matchWrap();
-        lp.setMargins(0, dp(12), 0, dp(6));
+        lp.setMargins(0, dp(14), 0, dp(7));
         content.addView(tv, lp);
     }
 
@@ -621,7 +699,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(14), dp(12), dp(14), dp(12));
-        box.setBackground(rounded(CARD, Color.rgb(254, 202, 202), dp(14)));
+        box.setBackground(rounded(CARD, Color.rgb(226, 232, 240), dp(8)));
         TextView t = new TextView(this);
         t.setText(title);
         t.setTextColor(TEXT);
@@ -641,7 +719,8 @@ public class MainActivity extends Activity {
             open.setText("فتح اللوكيشن");
             open.setTextColor(BRAND_DARK);
             open.setTextSize(13);
-            open.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(14)));
+            open.setAllCaps(false);
+            open.setBackground(rounded(BRAND_LIGHT, Color.rgb(254, 202, 202), dp(10)));
             open.setOnClickListener(v -> openLocation(mapLink));
             LinearLayout.LayoutParams openLp = matchWrap();
             openLp.setMargins(0, dp(6), 0, 0);
@@ -699,7 +778,7 @@ public class MainActivity extends Activity {
         return uri;
     }
 
-    private void sendWhatsApp(String phone, String customerName) {
+    private void sendWhatsApp(String phone, String customerName, int extinguisherCount) {
         String normalizedPhone = normalizePhone(phone);
         if (normalizedPhone.isEmpty()) {
             toast("رقم العميل غير مسجل");
@@ -707,7 +786,13 @@ public class MainActivity extends Activity {
         }
         String[] templates = whatsappTemplates();
         int selected = selectedWhatsappTemplateIndex(templates.length);
-        String message = templates[selected].replace("{name}", safe(customerName));
+        String template = templates[selected];
+        String message = template
+                .replace("{name}", safe(customerName))
+                .replace("{count}", String.valueOf(extinguisherCount));
+        if (!template.contains("{count}")) {
+            message = message + "\nعدد الطفايات المسجلة عندكم: " + extinguisherCount + " طفاية.";
+        }
         Uri uri = Uri.parse("https://wa.me/" + normalizedPhone + "?text=" + Uri.encode(message));
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, uri));
@@ -760,9 +845,9 @@ public class MainActivity extends Activity {
     }
 
     private String defaultWhatsappTemplates() {
-        return "تحياتنا لك {name}\nنذكركم بأن موعد انتهاء شهادة/استيكر الطفايات قرب، ونحتاج نحدد معكم موعد زيارة مناسب لصيانة الطفايات والتأكد من جاهزيتها.\nيعطيكم العافية.|||" +
-                "تحياتنا {name}\nحبيت أذكركم بقرب موعد صيانة الطفايات وتجديد المتابعة، فضلا زودونا بالوقت المناسب للزيارة.\nشاكرين تعاونكم.|||" +
-                "تحياتنا لكم\nموعد متابعة طفايات الحريق قرب، ونحتاج ترتيب زيارة صيانة في أقرب وقت يناسبكم.\nمع خالص الشكر.";
+        return "تحياتنا وتقديرنا لك {name}\nحبيت أذكركم إن موعد انتهاء شهادة/استيكر الطفايات قرب، وعدد الطفايات المسجلة عندكم {count} طفاية. ودي فرصة نرتب زيارة صيانة في الوقت اللي يناسبكم عشان نتأكد إن كل شي جاهز وآمن.\nالله يعطيكم العافية.|||" +
+                "تحياتنا لك {name}\nنذكركم بقرب موعد متابعة الطفايات، وعددها عندكم {count} طفاية. فضلا حددوا لنا وقت مناسب للزيارة والصيانة، وبإذن الله نخدمكم بالشكل اللي يرضيكم.\nشاكرين لكم تعاونكم.|||" +
+                "تحياتنا وتقديرنا\nعندكم {count} طفاية مسجلة لدينا، وموعد شهادة/استيكر الطفايات قرب ينتهي. نحتاج ننسق معكم موعد زيارة صيانة مناسب، وربي يبارك لكم.";
     }
 
     private void small(String text) {
@@ -779,7 +864,9 @@ public class MainActivity extends Activity {
         b.setText(text);
         b.setTextColor(BRAND_DARK);
         b.setTextSize(14);
-        b.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(14)));
+        b.setAllCaps(false);
+        b.setMinHeight(dp(46));
+        b.setBackground(rounded(Color.WHITE, Color.rgb(248, 113, 113), dp(10)));
         b.setOnClickListener(v -> action.run());
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(3), 0, dp(8));
@@ -791,7 +878,7 @@ public class MainActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(8), dp(4), dp(8), dp(4));
-        row.setBackground(rounded(Color.WHITE, BORDER, dp(14)));
+        row.setBackground(rounded(Color.WHITE, Color.rgb(226, 232, 240), dp(10)));
 
         EditText et = new EditText(this);
         et.setHint(hint);
@@ -809,7 +896,8 @@ public class MainActivity extends Activity {
             current.setText("موقعي");
             current.setTextSize(12);
             current.setTextColor(BRAND);
-            current.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(18)));
+            current.setAllCaps(false);
+            current.setBackground(rounded(BRAND_LIGHT, Color.rgb(254, 202, 202), dp(14)));
             current.setOnClickListener(v -> fillCurrentLocation(et));
             LinearLayout.LayoutParams locLp = new LinearLayout.LayoutParams(dp(78), dp(42));
             locLp.setMargins(dp(6), 0, 0, 0);
@@ -822,7 +910,8 @@ public class MainActivity extends Activity {
             mic.setText("صوت");
             mic.setTextSize(12);
             mic.setTextColor(BRAND);
-            mic.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(18)));
+            mic.setAllCaps(false);
+            mic.setBackground(rounded(BRAND_LIGHT, Color.rgb(254, 202, 202), dp(14)));
             mic.setOnClickListener(v -> startVoiceInput(et));
             LinearLayout.LayoutParams micLp = new LinearLayout.LayoutParams(dp(72), dp(42));
             micLp.setMargins(dp(6), 0, 0, 0);
@@ -840,7 +929,9 @@ public class MainActivity extends Activity {
         b.setText(text);
         b.setTextColor(Color.WHITE);
         b.setTextSize(15);
-        b.setBackground(rounded(BRAND, BRAND, dp(14)));
+        b.setAllCaps(false);
+        b.setMinHeight(dp(50));
+        b.setBackground(rounded(BRAND, ACCENT, dp(10)));
         b.setOnClickListener(v -> action.run());
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(8), 0, dp(8));
@@ -850,9 +941,11 @@ public class MainActivity extends Activity {
     private void voiceAllButton(String text, EditText... fields) {
         Button b = new Button(this);
         b.setText(text);
-        b.setTextColor(BRAND);
+        b.setTextColor(BRAND_DARK);
         b.setTextSize(14);
-        b.setBackground(rounded(BRAND_LIGHT, BRAND_LIGHT, dp(14)));
+        b.setAllCaps(false);
+        b.setMinHeight(dp(46));
+        b.setBackground(rounded(Color.WHITE, Color.rgb(254, 202, 202), dp(10)));
         b.setOnClickListener(v -> startVoiceGroupInput(fields));
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(3), 0, dp(8));
