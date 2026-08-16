@@ -16,6 +16,7 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.ContactsContract;
 import android.speech.RecognizerIntent;
 import android.text.InputType;
@@ -31,8 +32,15 @@ import android.widget.Toast;
 
 import com.google.firebase.auth.FirebaseUser;
 
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.pdf.PdfDocument;
+
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -42,6 +50,7 @@ public class MainActivity extends Activity {
     private static final int RECORD_AUDIO_REQUEST = 5043;
     private static final int LOCATION_REQUEST = 5044;
     private static final int CONTACTS_REQUEST = 5045;
+    private static final int ATTACHMENT_REQUEST = 5046;
     private static final int BRAND = Color.rgb(185, 28, 28);
     private static final int BRAND_DARK = Color.rgb(69, 10, 10);
     private static final int BRAND_LIGHT = Color.rgb(254, 242, 242);
@@ -58,6 +67,11 @@ public class MainActivity extends Activity {
     private EditText[] voiceGroup;
     private EditText locationTarget;
     private String currentTab = "home";
+    private String pendingAttachmentName = "";
+    private String pendingAttachmentPhone = "";
+    private String pendingAttachmentPlace = "";
+    private String pendingAttachmentLocation = "";
+    private String customerSearch = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,6 +89,8 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == SyncManager.RC_SIGN_IN) {
             sync.handleSignInResult(data, this::showSync);
+        } else if (requestCode == ATTACHMENT_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            saveAttachmentUri(data.getData());
         } else if (requestCode == VOICE_REQUEST && resultCode == RESULT_OK && data != null) {
             ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
             if (matches != null && !matches.isEmpty()) {
@@ -147,6 +163,7 @@ public class MainActivity extends Activity {
         addTab(tabs, "المرتبات", v -> showSalaries());
         addTab(tabs, "الطفايات", v -> showExtinguishers());
         addTab(tabs, "العملاء", v -> showCustomers());
+        addTab(tabs, "تنبيهات قريبة", v -> showAlerts());
         addTab(tabs, "الشهادات", v -> showCertificates());
         addTab(tabs, "الصيانة", v -> showMaintenance());
         addTab(tabs, "تقرير الشهر", v -> showMonthlyReport());
@@ -191,7 +208,7 @@ public class MainActivity extends Activity {
         homeAction("تسجيل طفايات جديدة", "صوت، موقع، اسم مكان، وسعر بالريال", this::showExtinguishers);
         homeAction("فتح العملاء", "تعديل صفحة منفصلة ورسائل واتساب جاهزة", this::showCustomers);
         homeAction("تقرير الشهر", "عدد الطفايات والإجماليات والنسب", this::showMonthlyReport);
-        homeAction("الإعدادات والمزامنة", "النسب، قوالب واتساب، وجهات الاتصال", this::showSettings);
+        homeAction("الإعدادات والنسخ الاحتياطي", "النسب، واتساب، جهات الاتصال، ونسخة محلية", this::showSettings);
     }
 
     private void showSalaries() {
@@ -280,6 +297,7 @@ public class MainActivity extends Activity {
                 ccv.put("phone", txt(phone));
                 ccv.put("place_name", txt(place));
                 ccv.put("location", txt(location));
+                ccv.put("customer_status", "جديد");
                 ccv.put("created_at", System.currentTimeMillis());
                 long customerId = db.insert("customers", ccv);
 
@@ -289,6 +307,7 @@ public class MainActivity extends Activity {
                 cv.put("phone", txt(phone));
                 cv.put("place_name", txt(place));
                 cv.put("location", txt(location));
+                cv.put("customer_status", "جديد");
                 cv.put("extinguisher_type", txt(type));
                 cv.put("weight", txt(weight));
                 cv.put("count", integer(count));
@@ -329,28 +348,51 @@ public class MainActivity extends Activity {
         currentTab = "customers";
         clear();
         section("العملاء");
-        Cursor c = db.raw("SELECT customer_name, phone, place_name, location, SUM(total_count) total_count, SUM(total_price) total_price " +
+        EditText search = input("بحث باسم العميل أو الرقم", InputType.TYPE_CLASS_TEXT);
+        search.setText(customerSearch);
+        button("بحث سريع", () -> {
+            customerSearch = txt(search);
+            showCustomers();
+        });
+        if (!customerSearch.isEmpty()) {
+            secondaryButton("إظهار كل العملاء", () -> {
+                customerSearch = "";
+                showCustomers();
+            });
+        }
+
+        String sql = "SELECT customer_name, phone, place_name, location, customer_status, SUM(total_count) total_count, SUM(total_price) total_price " +
                 "FROM (" +
-                "SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, SUM(count) total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM extinguishers GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,'') " +
-                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM safety_certificates GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,'') " +
-                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM technical_reports GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,'') " +
-                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, 0 total_count, 0 total_price, MAX(created_at) last_at FROM maintenance_contracts GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,'')" +
-                ") GROUP BY customer_name, phone, place_name, location ORDER BY MAX(last_at) DESC");
+                "SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, SUM(count) total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM extinguishers GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM safety_certificates GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM technical_reports GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, 0 total_price, MAX(created_at) last_at FROM maintenance_contracts GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد')" +
+                ") ";
+        ArrayList<String> args = new ArrayList<>();
+        if (!customerSearch.isEmpty()) {
+            sql += "WHERE customer_name LIKE ? OR phone LIKE ? ";
+            args.add("%" + customerSearch + "%");
+            args.add("%" + customerSearch + "%");
+        }
+        sql += "GROUP BY customer_name, phone, place_name, location, customer_status ORDER BY MAX(last_at) DESC";
+        Cursor c = db.raw(sql, args.toArray(new String[0]));
         try {
             while (c.moveToNext()) {
                 String oldName = c.getString(0);
                 String oldPhone = emptyForDb(c.getString(1));
                 String oldPlace = emptyForDb(c.getString(2));
                 String oldLocation = emptyForDb(c.getString(3));
-                int extinguisherCount = c.getInt(4);
-                double totalPrice = c.getDouble(5);
+                String status = emptyForDb(c.getString(4));
+                int extinguisherCount = c.getInt(5);
+                double totalPrice = c.getDouble(6);
                 card(oldName,
                         "رقم: " + safe(oldPhone) +
                                 "\nاسم المكان: " + safe(oldPlace) +
                                 "\nلوكيشن: " + safe(oldLocation) +
+                                "\nالحالة: " + safe(status.isEmpty() ? "جديد" : status) +
                                 "\nإجمالي الطفايات: " + displayCount(extinguisherCount) +
                                 "\nإجمالي المبلغ: " + money(totalPrice));
-                secondaryButton("تعديل بيانات العميل", () -> showCustomerDetails(oldName, oldPhone, oldPlace, oldLocation, extinguisherCount, totalPrice));
+                secondaryButton("تعديل بيانات العميل", () -> showCustomerDetails(oldName, oldPhone, oldPlace, oldLocation, status, extinguisherCount, totalPrice));
                 secondaryButton("رسالة واتساب للعميل", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
             }
         } finally {
@@ -358,7 +400,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void showCustomerDetails(String oldName, String oldPhone, String oldPlace, String oldLocation,
+    private void showCustomerDetails(String oldName, String oldPhone, String oldPlace, String oldLocation, String currentStatus,
                                      int extinguisherCount, double totalPrice) {
         currentTab = "customer_detail";
         clear();
@@ -367,10 +409,18 @@ public class MainActivity extends Activity {
                 "رقم: " + safe(oldPhone) +
                         "\nاسم المكان: " + safe(oldPlace) +
                         "\nلوكيشن: " + safe(oldLocation) +
+                        "\nالحالة: " + safe(currentStatus.isEmpty() ? "جديد" : currentStatus) +
                         "\nإجمالي الطفايات: " + displayCount(extinguisherCount) +
                         "\nإجمالي المبلغ: " + money(totalPrice));
         secondaryButton("رسالة واتساب جاهزة", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
+        secondaryButton("إضافة صورة/مرفق", () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
         secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
+
+        section("حالة العميل");
+        statusButton("جديد", oldName, oldPhone, oldPlace, oldLocation);
+        statusButton("تمت الزيارة", oldName, oldPhone, oldPlace, oldLocation);
+        statusButton("محتاج متابعة", oldName, oldPhone, oldPlace, oldLocation);
+        statusButton("تم التحصيل", oldName, oldPhone, oldPlace, oldLocation);
 
         section("تعديل بيانات العميل");
         EditText name = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
@@ -392,6 +442,15 @@ public class MainActivity extends Activity {
 
         section("كل بيانات العميل");
         listCustomerRecords(oldName, oldPhone, oldPlace, oldLocation);
+        listCustomerAttachments(oldName, oldPhone, oldPlace, oldLocation);
+    }
+
+    private void statusButton(String status, String name, String phone, String place, String location) {
+        secondaryButton(status, () -> {
+            db.updateCustomerStatusEverywhere(name, phone, place, location, status);
+            afterSave("تم تحديث حالة العميل: " + status);
+            showCustomers();
+        });
     }
 
     private void listCustomerRecords(String name, String phone, String place, String location) {
@@ -538,6 +597,7 @@ public class MainActivity extends Activity {
                 cv.put("phone", txt(phone));
                 cv.put("place_name", txt(place));
                 cv.put("location", txt(location));
+                cv.put("customer_status", "جديد");
                 cv.put("total_price", dbl(amount));
                 cv.put(dateColumn, base);
                 cv.put("reminder_at", reminder);
@@ -574,6 +634,7 @@ public class MainActivity extends Activity {
                 cv.put("phone", txt(phone));
                 cv.put("place_name", txt(place));
                 cv.put("location", txt(location));
+                cv.put("customer_status", "جديد");
                 cv.put("start_date", startDate);
                 cv.put("next_visit_at", visit);
                 cv.put("reminder_at", reminder);
@@ -608,6 +669,7 @@ public class MainActivity extends Activity {
         currentTab = "report";
         clear();
         section("تقرير الشهر الحالي");
+        button("تصدير تقرير الشهر PDF", this::exportMonthlyPdf);
         long[] range = monthRange();
         Cursor c = db.raw("SELECT COALESCE(SUM(count),0), COALESCE(SUM(total_price),0) FROM extinguishers " +
                 "WHERE created_at BETWEEN ? AND ?", String.valueOf(range[0]), String.valueOf(range[1]));
@@ -655,6 +717,62 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void showAlerts() {
+        currentTab = "alerts";
+        clear();
+        section("تنبيهات قريبة");
+        long now = System.currentTimeMillis();
+        long soon = now + 30L * 24L * 60L * 60L * 1000L;
+        small("يعرض المتأخر والجاي خلال 30 يوم للطفايات والشهادات وعقود الصيانة.");
+        listAlerts("طفايات", "extinguishers", "sticker_date", now, soon);
+        listAlerts("شهادات السلامة", "safety_certificates", "certificate_date", now, soon);
+        listMaintenanceAlerts(now, soon);
+    }
+
+    private void listAlerts(String label, String table, String dateColumn, long now, long soon) {
+        Cursor c = db.raw("SELECT customer_name, phone, place_name, location, " + dateColumn + ", reminder_at FROM " + table +
+                        " WHERE reminder_at<=? ORDER BY reminder_at ASC",
+                String.valueOf(soon));
+        try {
+            while (c.moveToNext()) {
+                long reminder = c.getLong(5);
+                card(label + " - " + c.getString(0),
+                        "الحالة: " + alertState(reminder, now) +
+                                "\nتاريخ البند: " + ReminderScheduler.formatDate(c.getLong(4)) +
+                                "\nالتذكير: " + ReminderScheduler.formatDate(reminder) +
+                                "\nرقم: " + safe(c.getString(1)) +
+                                "\nاسم المكان: " + safe(c.getString(2)) +
+                                "\nلوكيشن: " + safe(c.getString(3)));
+            }
+        } finally {
+            c.close();
+        }
+    }
+
+    private void listMaintenanceAlerts(long now, long soon) {
+        Cursor c = db.raw("SELECT customer_name, phone, place_name, location, next_visit_at, reminder_at FROM maintenance_contracts " +
+                        "WHERE reminder_at<=? ORDER BY reminder_at ASC",
+                String.valueOf(soon));
+        try {
+            while (c.moveToNext()) {
+                long reminder = c.getLong(5);
+                card("عقد صيانة - " + c.getString(0),
+                        "الحالة: " + alertState(reminder, now) +
+                                "\nالزيارة القادمة: " + ReminderScheduler.formatDate(c.getLong(4)) +
+                                "\nالتذكير: " + ReminderScheduler.formatDate(reminder) +
+                                "\nرقم: " + safe(c.getString(1)) +
+                                "\nاسم المكان: " + safe(c.getString(2)) +
+                                "\nلوكيشن: " + safe(c.getString(3)));
+            }
+        } finally {
+            c.close();
+        }
+    }
+
+    private String alertState(long reminder, long now) {
+        return reminder < now ? "متأخر" : "قريب";
+    }
+
     private void showSettings() {
         currentTab = "settings";
         clear();
@@ -673,6 +791,29 @@ public class MainActivity extends Activity {
             showSettings();
         });
         small("كل نسبة تتحسب في تقرير الشهر على إجمالي مبلغ البند الخاص بها.");
+
+        section("النسخ الاحتياطي المحلي");
+        card("نسخة تلقائية على الموبايل",
+                "بعد كل حفظ التطبيق بيحدث نسخة احتياطية تلقائيا.\nآخر ملف: " + LocalBackupManager.latestPath(this));
+        button("عمل نسخة احتياطية الآن", () -> {
+            try {
+                String path = LocalBackupManager.backupNow(this, db);
+                toast("تم حفظ النسخة: " + path);
+            } catch (Exception e) {
+                toast("تعذر حفظ النسخة الاحتياطية");
+            }
+        });
+        secondaryButton("استرجاع آخر نسخة محلية", () -> {
+            try {
+                LocalBackupManager.restoreLatest(this, db);
+                ReminderScheduler.scheduleAll(this, db);
+                sync.autoUploadQuietly();
+                toast("تم استرجاع آخر نسخة محلية");
+                showHome();
+            } catch (Exception e) {
+                toast("لا توجد نسخة محلية صالحة للاسترجاع");
+            }
+        });
 
         section("جهات الاتصال");
         boolean contactsEnabled = "1".equals(db.setting("auto_save_contacts", "0"));
@@ -752,6 +893,7 @@ public class MainActivity extends Activity {
 
     private void afterSave(String message) {
         ReminderScheduler.scheduleAll(this, db);
+        LocalBackupManager.backupQuietly(this, db);
         sync.autoUploadQuietly();
         toast(message);
     }
@@ -897,6 +1039,192 @@ public class MainActivity extends Activity {
             return Uri.parse("geo:" + value + "?q=" + Uri.encode(value));
         }
         return uri;
+    }
+
+    private void chooseAttachment(String name, String phone, String place, String location) {
+        pendingAttachmentName = name;
+        pendingAttachmentPhone = phone;
+        pendingAttachmentPlace = place;
+        pendingAttachmentLocation = location;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "application/pdf"});
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, ATTACHMENT_REQUEST);
+        } catch (Exception e) {
+            toast("تعذر فتح اختيار المرفق");
+        }
+    }
+
+    private void saveAttachmentUri(Uri uri) {
+        try {
+            final int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            getContentResolver().takePersistableUriPermission(uri, flags);
+        } catch (Exception ignored) {
+        }
+        ContentValues cv = new ContentValues();
+        cv.put("customer_name", pendingAttachmentName);
+        cv.put("phone", pendingAttachmentPhone);
+        cv.put("place_name", pendingAttachmentPlace);
+        cv.put("location", pendingAttachmentLocation);
+        cv.put("title", attachmentTitle(uri));
+        cv.put("uri", uri.toString());
+        cv.put("created_at", System.currentTimeMillis());
+        db.insert("customer_attachments", cv);
+        afterSave("تم حفظ المرفق مع العميل");
+        int count = customerExtinguisherCount(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace, pendingAttachmentLocation);
+        double total = customerTotalPrice(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace, pendingAttachmentLocation);
+        String status = customerStatus(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace, pendingAttachmentLocation);
+        showCustomerDetails(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace,
+                pendingAttachmentLocation, status, count, total);
+    }
+
+    private String attachmentTitle(Uri uri) {
+        String text = uri.getLastPathSegment();
+        return text == null || text.trim().isEmpty() ? "مرفق عميل" : text;
+    }
+
+    private void listCustomerAttachments(String name, String phone, String place, String location) {
+        section("صور ومرفقات العميل");
+        Cursor c = db.raw("SELECT title, uri, created_at FROM customer_attachments " +
+                "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC",
+                customerArgs(name, phone, place, location));
+        try {
+            while (c.moveToNext()) {
+                String title = safe(c.getString(0));
+                String uri = c.getString(1);
+                card(title, "تمت الإضافة: " + ReminderScheduler.formatDate(c.getLong(2)));
+                secondaryButton("فتح المرفق", () -> openAttachment(uri));
+            }
+        } finally {
+            c.close();
+        }
+    }
+
+    private void openAttachment(String uriText) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriText));
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(intent);
+        } catch (Exception e) {
+            toast("تعذر فتح المرفق");
+        }
+    }
+
+    private void exportMonthlyPdf() {
+        try {
+            File file = createMonthlyPdf();
+            toast("تم حفظ PDF: " + file.getAbsolutePath());
+        } catch (Exception e) {
+            toast("تعذر تصدير تقرير الشهر PDF");
+        }
+    }
+
+    private File createMonthlyPdf() throws Exception {
+        long[] range = monthRange();
+        PdfDocument pdf = new PdfDocument();
+        PdfDocument.PageInfo info = new PdfDocument.PageInfo.Builder(595, 842, 1).create();
+        PdfDocument.Page page = pdf.startPage(info);
+        Canvas canvas = page.getCanvas();
+        Paint titlePaint = new Paint();
+        titlePaint.setColor(BRAND_DARK);
+        titlePaint.setTextSize(20);
+        titlePaint.setTextAlign(Paint.Align.RIGHT);
+        titlePaint.setFakeBoldText(true);
+        Paint paint = new Paint();
+        paint.setColor(TEXT);
+        paint.setTextSize(13);
+        paint.setTextAlign(Paint.Align.RIGHT);
+
+        int x = 555;
+        int y = 48;
+        canvas.drawText("تقرير الشهر الحالي", x, y, titlePaint);
+        y += 32;
+        y = drawPdfLine(canvas, paint, "تاريخ التصدير: " + ReminderScheduler.formatDate(System.currentTimeMillis()), x, y);
+        y = drawPdfLine(canvas, paint, "عدد الطفايات: " + cleanNumber(singleDouble("SELECT COALESCE(SUM(count),0) FROM extinguishers WHERE created_at BETWEEN " + range[0] + " AND " + range[1])), x, y);
+        y = drawPdfLine(canvas, paint, "إجمالي مبلغ الطفايات: " + money(singleDouble("SELECT COALESCE(SUM(total_price),0) FROM extinguishers WHERE created_at BETWEEN " + range[0] + " AND " + range[1])), x, y);
+        y = drawPdfLine(canvas, paint, "إجمالي شهادات السلامة: " + money(singleDouble("SELECT COALESCE(SUM(total_price),0) FROM safety_certificates WHERE created_at BETWEEN " + range[0] + " AND " + range[1])), x, y);
+        y = drawPdfLine(canvas, paint, "إجمالي التقارير الفنية: " + money(singleDouble("SELECT COALESCE(SUM(total_price),0) FROM technical_reports WHERE created_at BETWEEN " + range[0] + " AND " + range[1])), x, y);
+        y += 18;
+        canvas.drawText("آخر السلف هذا الشهر", x, y, titlePaint);
+        y += 24;
+        Cursor c = db.raw("SELECT employee_name, amount FROM advances WHERE created_at BETWEEN ? AND ? ORDER BY created_at DESC LIMIT 12",
+                String.valueOf(range[0]), String.valueOf(range[1]));
+        try {
+            while (c.moveToNext() && y < 790) {
+                y = drawPdfLine(canvas, paint, safe(c.getString(0)) + " - " + money(c.getDouble(1)), x, y);
+            }
+        } finally {
+            c.close();
+        }
+
+        pdf.finishPage(page);
+        File base = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
+        if (base == null) base = getFilesDir();
+        File dir = new File(base, "FireManagerReports");
+        if (!dir.exists()) dir.mkdirs();
+        String month = String.format(Locale.US, "%tY-%tm", new Date(), new Date());
+        File file = new File(dir, "monthly-report-" + month + ".pdf");
+        FileOutputStream output = new FileOutputStream(file);
+        try {
+            pdf.writeTo(output);
+        } finally {
+            output.close();
+            pdf.close();
+        }
+        return file;
+    }
+
+    private int customerExtinguisherCount(String name, String phone, String place, String location) {
+        Cursor c = db.raw("SELECT COALESCE(SUM(count),0) FROM extinguishers " +
+                        "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?",
+                customerArgs(name, phone, place, location));
+        try {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        } finally {
+            c.close();
+        }
+    }
+
+    private double customerTotalPrice(String name, String phone, String place, String location) {
+        Cursor c = db.raw("SELECT COALESCE(SUM(total_price),0) FROM (" +
+                        "SELECT total_price FROM extinguishers WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? " +
+                        "UNION ALL SELECT total_price FROM safety_certificates WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? " +
+                        "UNION ALL SELECT total_price FROM technical_reports WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?)",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location),
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location),
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+        try {
+            return c.moveToFirst() ? c.getDouble(0) : 0;
+        } finally {
+            c.close();
+        }
+    }
+
+    private String customerStatus(String name, String phone, String place, String location) {
+        Cursor c = db.raw("SELECT IFNULL(customer_status,'جديد') FROM (" +
+                        "SELECT customer_status, created_at FROM extinguishers WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? " +
+                        "UNION ALL SELECT customer_status, created_at FROM safety_certificates WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? " +
+                        "UNION ALL SELECT customer_status, created_at FROM technical_reports WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? " +
+                        "UNION ALL SELECT customer_status, created_at FROM maintenance_contracts WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?) " +
+                        "ORDER BY created_at DESC LIMIT 1",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location),
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location),
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location),
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+        try {
+            if (c.moveToFirst()) return emptyForDb(c.getString(0));
+        } finally {
+            c.close();
+        }
+        return "جديد";
+    }
+
+    private int drawPdfLine(Canvas canvas, Paint paint, String text, int x, int y) {
+        canvas.drawText(text, x, y, paint);
+        return y + 22;
     }
 
     private void sendWhatsApp(String phone, String customerName, int extinguisherCount) {
