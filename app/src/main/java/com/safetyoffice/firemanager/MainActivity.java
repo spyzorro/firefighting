@@ -74,6 +74,7 @@ public class MainActivity extends Activity {
     private String pendingAttachmentLocation = "";
     private String pendingExtinguisherImageUri = "";
     private String customerSearch = "";
+    private String customerStatusFilter = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -428,6 +429,9 @@ public class MainActivity extends Activity {
                 showCustomers();
             });
         }
+        section("فلترة حسب الحالة");
+        filterStatusButton("كل الحالات", "");
+        for (String status : customerStatuses()) filterStatusButton(status, status);
 
         String sql = "SELECT customer_name, phone, place_name, location, customer_status, SUM(total_count) total_count, SUM(total_price) total_price " +
                 "FROM (" +
@@ -437,10 +441,15 @@ public class MainActivity extends Activity {
                 "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, 0 total_price, MAX(created_at) last_at FROM maintenance_contracts GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد')" +
                 ") ";
         ArrayList<String> args = new ArrayList<>();
+        sql += "WHERE 1=1 ";
         if (!customerSearch.isEmpty()) {
-            sql += "WHERE customer_name LIKE ? OR phone LIKE ? ";
+            sql += "AND (customer_name LIKE ? OR phone LIKE ?) ";
             args.add("%" + customerSearch + "%");
             args.add("%" + customerSearch + "%");
+        }
+        if (!customerStatusFilter.isEmpty()) {
+            sql += "AND customer_status=? ";
+            args.add(customerStatusFilter);
         }
         sql += "GROUP BY customer_name, phone, place_name, location, customer_status ORDER BY MAX(last_at) DESC";
         Cursor c = db.raw(sql, args.toArray(new String[0]));
@@ -481,14 +490,12 @@ public class MainActivity extends Activity {
                         "\nإجمالي الطفايات: " + displayCount(extinguisherCount) +
                         "\nإجمالي المبلغ: " + money(totalPrice));
         secondaryButton("رسالة واتساب جاهزة", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
+        secondaryButton("مشاركة تقرير العميل واتساب", () -> shareCustomerReportWhatsApp(oldPhone, oldName, oldPlace, oldLocation, currentStatus, extinguisherCount, totalPrice));
         secondaryButton("إضافة صورة/مرفق", () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
         secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
 
         section("حالة العميل");
-        statusButton("جديد", oldName, oldPhone, oldPlace, oldLocation);
-        statusButton("تمت الزيارة", oldName, oldPhone, oldPlace, oldLocation);
-        statusButton("محتاج متابعة", oldName, oldPhone, oldPlace, oldLocation);
-        statusButton("تم التحصيل", oldName, oldPhone, oldPlace, oldLocation);
+        for (String status : customerStatuses()) statusButton(status, oldName, oldPhone, oldPlace, oldLocation);
 
         section("تعديل بيانات العميل");
         EditText name = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
@@ -519,6 +526,28 @@ public class MainActivity extends Activity {
             afterSave("تم تحديث حالة العميل: " + status);
             showCustomers();
         });
+    }
+
+    private void filterStatusButton(String label, String status) {
+        String selected = status.equals(customerStatusFilter) ? " ✓" : "";
+        secondaryButton(label + selected, () -> {
+            customerStatusFilter = status;
+            showCustomers();
+        });
+    }
+
+    private String[] customerStatuses() {
+        return new String[]{
+                "جديد",
+                "تمت الزيارة",
+                "محتاج متابعة",
+                "تم التحصيل",
+                "استلم الشغل - باقي تحصيل",
+                "تحصيل جزئي - باقي مبلغ",
+                "الطفايات عندي - لم يستلمها العميل",
+                "متفقين - لم يتم التنفيذ",
+                "تنفيذ جزئي - باقي شغل"
+        };
     }
 
     private void listCustomerRecords(String name, String phone, String place, String location) {
@@ -1325,11 +1354,6 @@ public class MainActivity extends Activity {
     }
 
     private void sendWhatsApp(String phone, String customerName, int extinguisherCount) {
-        String normalizedPhone = normalizePhone(phone);
-        if (normalizedPhone.isEmpty()) {
-            toast("رقم العميل غير مسجل");
-            return;
-        }
         String[] templates = whatsappTemplates();
         int selected = selectedWhatsappTemplateIndex(templates.length);
         String template = templates[selected];
@@ -1339,6 +1363,52 @@ public class MainActivity extends Activity {
                 .replace("{count}", countText);
         if (!template.contains("{count}") && extinguisherCount > 0) {
             message = message + "\nعدد الطفايات المسجلة عندكم: " + extinguisherCount + " طفاية.";
+        }
+        openWhatsAppMessage(phone, message);
+    }
+
+    private void shareCustomerReportWhatsApp(String phone, String name, String place, String location,
+                                             String status, int extinguisherCount, double totalPrice) {
+        String message = buildCustomerReport(phone, name, place, location, status, extinguisherCount, totalPrice);
+        openWhatsAppMessage(phone, message);
+    }
+
+    private String buildCustomerReport(String phone, String name, String place, String location, String status,
+                                       int extinguisherCount, double totalPrice) {
+        StringBuilder out = new StringBuilder();
+        out.append("تحياتنا لك ").append(safe(name)).append("\n");
+        out.append("هذا ملخص حالة العميل/الموقع لدينا:\n");
+        out.append("الحالة: ").append(safe(status.isEmpty() ? "جديد" : status)).append("\n");
+        out.append("اسم المكان: ").append(safe(place)).append("\n");
+        out.append("عدد الطفايات: ").append(extinguisherCount > 0 ? extinguisherCount + " طفاية" : "").append("\n");
+        out.append("إجمالي المبلغ المسجل: ").append(money(totalPrice)).append("\n");
+        if (!emptyForDb(location).isEmpty()) out.append("اللوكيشن: ").append(location).append("\n");
+
+        Cursor c = db.raw("SELECT extinguisher_type, weight, count, total_price, delivered_again FROM extinguishers " +
+                        "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC LIMIT 3",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+        try {
+            int index = 1;
+            while (c.moveToNext()) {
+                out.append("\nطفاية ").append(index++).append(": ");
+                out.append(safe(c.getString(0))).append(" - ");
+                out.append(safe(c.getString(1))).append(" - ");
+                out.append(c.getInt(2)).append(" عدد - ");
+                out.append(money(c.getDouble(3))).append(" - ");
+                out.append("استلم تاني: ").append(yesNoLabel(c.getInt(4)));
+            }
+        } finally {
+            c.close();
+        }
+        out.append("\n\nشاكرين لكم، وبانتظار تأكيدكم.");
+        return out.toString();
+    }
+
+    private void openWhatsAppMessage(String phone, String message) {
+        String normalizedPhone = normalizePhone(phone);
+        if (normalizedPhone.isEmpty()) {
+            toast("رقم العميل غير مسجل");
+            return;
         }
         Uri uri = Uri.parse("https://wa.me/" + normalizedPhone + "?text=" + Uri.encode(message));
         try {
