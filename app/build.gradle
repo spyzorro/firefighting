@@ -3,16 +3,30 @@ plugins {
     id "com.google.gms.google-services"
 }
 
+def githubRunNumberText = System.getenv("GITHUB_RUN_NUMBER") ?: "0"
+def githubRunNumber = githubRunNumberText ==~ /\d+/ ? githubRunNumberText.toInteger() : 0
+def autoVersionCode = githubRunNumber > 0 ? 220000 + githubRunNumber : 220015
+def autoVersionName = githubRunNumber > 0 ? "2.2.${githubRunNumber}" : "2.2.15"
+
 android {
     namespace "com.safetyoffice.firemanager"
     compileSdk 35
+
+    signingConfigs {
+        fireManager {
+            storeFile file("firemanager-update.jks")
+            storePassword "FireManager2026"
+            keyAlias "firemanager"
+            keyPassword "FireManager2026"
+        }
+    }
 
     defaultConfig {
         applicationId "com.safetyoffice.firemanager"
         minSdk 23
         targetSdk 35
-        versionCode 14
-        versionName "2.2.0"
+        versionCode autoVersionCode
+        versionName autoVersionName
     }
 
     sourceSets {
@@ -24,7 +38,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.fireManager
+        }
         release {
+            signingConfig signingConfigs.fireManager
             minifyEnabled false
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
