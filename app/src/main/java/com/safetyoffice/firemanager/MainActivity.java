@@ -51,10 +51,11 @@ public class MainActivity extends Activity {
     private static final int LOCATION_REQUEST = 5044;
     private static final int CONTACTS_REQUEST = 5045;
     private static final int ATTACHMENT_REQUEST = 5046;
-    private static final int BRAND = Color.rgb(185, 28, 28);
-    private static final int BRAND_DARK = Color.rgb(69, 10, 10);
-    private static final int BRAND_LIGHT = Color.rgb(254, 242, 242);
-    private static final int ACCENT = Color.rgb(249, 115, 22);
+    private static final int EXTINGUISHER_IMAGE_REQUEST = 5047;
+    private static final int BRAND = Color.rgb(15, 23, 42);
+    private static final int BRAND_DARK = Color.rgb(2, 6, 23);
+    private static final int BRAND_LIGHT = Color.rgb(241, 245, 249);
+    private static final int ACCENT = Color.rgb(220, 38, 38);
     private static final int BG = Color.rgb(248, 250, 252);
     private static final int CARD = Color.rgb(255, 255, 255);
     private static final int BORDER = Color.rgb(203, 213, 225);
@@ -71,6 +72,7 @@ public class MainActivity extends Activity {
     private String pendingAttachmentPhone = "";
     private String pendingAttachmentPlace = "";
     private String pendingAttachmentLocation = "";
+    private String pendingExtinguisherImageUri = "";
     private String customerSearch = "";
 
     @Override
@@ -91,6 +93,9 @@ public class MainActivity extends Activity {
             sync.handleSignInResult(data, this::showSync);
         } else if (requestCode == ATTACHMENT_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
             saveAttachmentUri(data.getData());
+        } else if (requestCode == EXTINGUISHER_IMAGE_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            pendingExtinguisherImageUri = persistReadableUri(data.getData());
+            toast("تم اختيار صورة الطفاية");
         } else if (requestCode == VOICE_REQUEST && resultCode == RESULT_OK && data != null) {
             ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
             if (matches != null && !matches.isEmpty()) {
@@ -150,7 +155,7 @@ public class MainActivity extends Activity {
 
         TextView sub = new TextView(this);
         sub.setText("عملاء، طفايات، واتساب، تنبيهات، ومزامنة Google");
-        sub.setTextColor(Color.rgb(120, 53, 15));
+        sub.setTextColor(Color.rgb(71, 85, 105));
         sub.setGravity(Gravity.RIGHT);
         sub.setTextSize(14);
         root.addView(sub, matchWrap());
@@ -159,16 +164,17 @@ public class MainActivity extends Activity {
         hsv.setHorizontalScrollBarEnabled(false);
         LinearLayout tabs = new LinearLayout(this);
         tabs.setOrientation(LinearLayout.HORIZONTAL);
-        addTab(tabs, "الرئيسية", v -> showHome());
-        addTab(tabs, "المرتبات", v -> showSalaries());
-        addTab(tabs, "الطفايات", v -> showExtinguishers());
-        addTab(tabs, "العملاء", v -> showCustomers());
-        addTab(tabs, "تنبيهات قريبة", v -> showAlerts());
-        addTab(tabs, "الشهادات", v -> showCertificates());
-        addTab(tabs, "الصيانة", v -> showMaintenance());
-        addTab(tabs, "تقرير الشهر", v -> showMonthlyReport());
-        addTab(tabs, "الإعدادات", v -> showSettings());
-        addTab(tabs, "Google", v -> showSync());
+        addTab(tabs, "الرئيسية", R.drawable.ic_nav_home, v -> showHome());
+        addTab(tabs, "المهام", R.drawable.ic_nav_tasks, v -> showTasks());
+        addTab(tabs, "المرتبات", R.drawable.ic_nav_salary, v -> showSalaries());
+        addTab(tabs, "الطفايات", R.drawable.ic_nav_extinguisher, v -> showExtinguishers());
+        addTab(tabs, "العملاء", R.drawable.ic_nav_customers, v -> showCustomers());
+        addTab(tabs, "تنبيهات", R.drawable.ic_nav_alerts, v -> showAlerts());
+        addTab(tabs, "الشهادات", R.drawable.ic_nav_certificate, v -> showCertificates());
+        addTab(tabs, "الصيانة", R.drawable.ic_nav_maintenance, v -> showMaintenance());
+        addTab(tabs, "التقرير", R.drawable.ic_nav_report, v -> showMonthlyReport());
+        addTab(tabs, "الإعدادات", R.drawable.ic_nav_settings, v -> showSettings());
+        addTab(tabs, "Google", R.drawable.ic_nav_sync, v -> showSync());
         hsv.addView(tabs);
         root.addView(hsv, matchWrap());
 
@@ -181,15 +187,17 @@ public class MainActivity extends Activity {
         setContentView(root);
     }
 
-    private void addTab(LinearLayout tabs, String text, View.OnClickListener listener) {
+    private void addTab(LinearLayout tabs, String text, int iconRes, View.OnClickListener listener) {
         Button b = new Button(this);
         b.setText(text);
         b.setTextColor(BRAND_DARK);
-        b.setTextSize(14);
+        b.setTextSize(12);
         b.setAllCaps(false);
-        b.setBackground(rounded(Color.WHITE, Color.rgb(254, 202, 202), dp(18)));
+        b.setCompoundDrawablesWithIntrinsicBounds(0, iconRes, 0, 0);
+        b.setCompoundDrawablePadding(dp(3));
+        b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(12)));
         b.setOnClickListener(listener);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(86), dp(62));
         lp.setMargins(dp(4), dp(10), dp(4), dp(6));
         tabs.addView(b, lp);
     }
@@ -206,9 +214,60 @@ public class MainActivity extends Activity {
                         "\nإجمالي مبالغ الطفايات: " + money(total));
         section("ابدأ بسرعة");
         homeAction("تسجيل طفايات جديدة", "صوت، موقع، اسم مكان، وسعر بالريال", this::showExtinguishers);
+        homeAction("قائمة المهام", "متابعة الشغل اليومي ومواعيد التنفيذ", this::showTasks);
         homeAction("فتح العملاء", "تعديل صفحة منفصلة ورسائل واتساب جاهزة", this::showCustomers);
         homeAction("تقرير الشهر", "عدد الطفايات والإجماليات والنسب", this::showMonthlyReport);
         homeAction("الإعدادات والنسخ الاحتياطي", "النسب، واتساب، جهات الاتصال، ونسخة محلية", this::showSettings);
+    }
+
+    private void showTasks() {
+        currentTab = "tasks";
+        clear();
+        section("قائمة المهام");
+        EditText title = input("عنوان المهمة", InputType.TYPE_CLASS_TEXT);
+        EditText note = input("ملاحظة اختيارية", InputType.TYPE_CLASS_TEXT);
+        EditText due = input("تاريخ التنفيذ اختياري yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
+        voiceAllButton("قول بيانات المهمة مرة واحدة", title, note, due);
+        button("حفظ المهمة", () -> {
+            if (empty(title)) return;
+            try {
+                long dueDate = txt(due).isEmpty() ? 0 : ReminderScheduler.parseDate(txt(due));
+                ContentValues cv = new ContentValues();
+                cv.put("title", txt(title));
+                cv.put("note", txt(note));
+                cv.put("due_date", dueDate);
+                cv.put("is_done", 0);
+                cv.put("created_at", System.currentTimeMillis());
+                db.insert("tasks", cv);
+                afterSave("تم حفظ المهمة");
+                showTasks();
+            } catch (Exception e) {
+                toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
+            }
+        });
+
+        section("المهام المسجلة");
+        Cursor c = db.all("tasks");
+        try {
+            while (c.moveToNext()) {
+                long id = c.getLong(c.getColumnIndexOrThrow("id"));
+                int done = c.getInt(c.getColumnIndexOrThrow("is_done"));
+                long dueDate = c.getLong(c.getColumnIndexOrThrow("due_date"));
+                card(c.getString(c.getColumnIndexOrThrow("title")),
+                        "الحالة: " + (done == 1 ? "تمت" : "مفتوحة") +
+                                "\nالتاريخ: " + (dueDate > 0 ? ReminderScheduler.formatDate(dueDate) : "-") +
+                                "\nملاحظة: " + val(c, "note"));
+                secondaryButton(done == 1 ? "إرجاع كمهمة مفتوحة" : "تم تنفيذ المهمة", () -> {
+                    ContentValues cv = new ContentValues();
+                    cv.put("is_done", done == 1 ? 0 : 1);
+                    db.update("tasks", cv, "id=?", String.valueOf(id));
+                    afterSave("تم تحديث المهمة");
+                    showTasks();
+                });
+            }
+        } finally {
+            c.close();
+        }
     }
 
     private void showSalaries() {
@@ -273,6 +332,7 @@ public class MainActivity extends Activity {
     private void showExtinguishers() {
         currentTab = "extinguishers";
         clear();
+        pendingExtinguisherImageUri = "";
         section("تسجيل طفايات لعميل");
         EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
@@ -282,9 +342,12 @@ public class MainActivity extends Activity {
         EditText weight = input("وزن الطفاية", InputType.TYPE_CLASS_TEXT);
         EditText count = input("عدد الطفايات", InputType.TYPE_CLASS_NUMBER);
         EditText price = input("إجمالي مبلغ الطفايات", numberType());
+        EditText deliveredAgain = input("استلم الطفايات تاني؟ نعم/لا", InputType.TYPE_CLASS_TEXT);
+        deliveredAgain.setText("لا");
         EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
-        voiceAllButton("تسجيل سريع بالصوت: قول بيانات الطفايات مرة واحدة", customer, place, location, type, weight, count, price, date);
+        secondaryButton("رفع صورة الطفاية", () -> chooseExtinguisherImage());
+        voiceAllButton("تسجيل سريع بالصوت: قول بيانات الطفايات مرة واحدة", customer, place, location, type, weight, count, price, deliveredAgain, date);
         small("مثال: محمد 20 طفاية بودرة co2 120 ريال. رقم الموبايل اكتبه عادي، واللوكيشن اضغط موقعي.");
         button("حفظ الطفايات وجدولة التذكير", () -> {
             if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
@@ -314,6 +377,8 @@ public class MainActivity extends Activity {
                 cv.put("total_price", dbl(price));
                 cv.put("sticker_date", stickerDate);
                 cv.put("reminder_at", reminder);
+                cv.put("image_uri", pendingExtinguisherImageUri);
+                cv.put("delivered_again", yesNo(txt(deliveredAgain)) ? 1 : 0);
                 cv.put("created_at", System.currentTimeMillis());
                 db.insert("extinguishers", cv);
                 saveContactIfEnabled(txt(customer), txt(phone));
@@ -334,10 +399,13 @@ public class MainActivity extends Activity {
                                 "\nنوع: " + val(c, "extinguisher_type") +
                                 "\nوزن: " + val(c, "weight") +
                                 "\nمبلغ: " + money(c.getDouble(c.getColumnIndexOrThrow("total_price"))) +
+                                "\nاستلم تاني: " + yesNoLabel(c.getInt(c.getColumnIndexOrThrow("delivered_again"))) +
                                 "\nالتذكير: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("reminder_at"))) +
                                 "\nرقم: " + val(c, "phone") +
                                 "\nاسم المكان: " + val(c, "place_name") +
                                 "\nلوكيشن: " + val(c, "location"));
+                String image = rawVal(c, "image_uri");
+                if (!image.isEmpty()) secondaryButton("فتح صورة الطفاية", () -> openAttachment(image));
             }
         } finally {
             c.close();
@@ -455,7 +523,7 @@ public class MainActivity extends Activity {
 
     private void listCustomerRecords(String name, String phone, String place, String location) {
         String[] args = customerArgs(name, phone, place, location);
-        Cursor e = db.raw("SELECT id, extinguisher_type, weight, count, total_price, sticker_date, reminder_at FROM extinguishers " +
+        Cursor e = db.raw("SELECT id, extinguisher_type, weight, count, total_price, sticker_date, reminder_at, image_uri, delivered_again FROM extinguishers " +
                 "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
         try {
             while (e.moveToNext()) {
@@ -466,7 +534,10 @@ public class MainActivity extends Activity {
                                 "\nالعدد: " + e.getInt(3) +
                                 "\nالمبلغ: " + money(e.getDouble(4)) +
                                 "\nتاريخ الاستيكر: " + ReminderScheduler.formatDate(e.getLong(5)) +
-                                "\nالتذكير: " + ReminderScheduler.formatDate(e.getLong(6)));
+                                "\nالتذكير: " + ReminderScheduler.formatDate(e.getLong(6)) +
+                                "\nاستلم تاني: " + yesNoLabel(e.getInt(8)));
+                String image = emptyForDb(e.getString(7));
+                if (!image.isEmpty()) secondaryButton("فتح صورة الطفاية", () -> openAttachment(image));
                 secondaryButton("تعديل بيانات الطفايات", () -> showExtinguisherEdit(id));
             }
         } finally {
@@ -535,6 +606,11 @@ public class MainActivity extends Activity {
             count.setText(String.valueOf(c.getInt(c.getColumnIndexOrThrow("count"))));
             EditText price = input("إجمالي مبلغ الطفايات", numberType());
             price.setText(cleanNumber(c.getDouble(c.getColumnIndexOrThrow("total_price"))));
+            EditText deliveredAgain = input("استلم الطفايات تاني؟ نعم/لا", InputType.TYPE_CLASS_TEXT);
+            deliveredAgain.setText(yesNoLabel(c.getInt(c.getColumnIndexOrThrow("delivered_again"))));
+            pendingExtinguisherImageUri = rawVal(c, "image_uri");
+            secondaryButton(pendingExtinguisherImageUri.isEmpty() ? "رفع صورة الطفاية" : "تغيير صورة الطفاية", () -> chooseExtinguisherImage());
+            if (!pendingExtinguisherImageUri.isEmpty()) secondaryButton("فتح صورة الطفاية الحالية", () -> openAttachment(pendingExtinguisherImageUri));
             EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
             date.setText(ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("sticker_date"))));
             button("حفظ وإغلاق تعديل الطفايات", () -> {
@@ -552,6 +628,8 @@ public class MainActivity extends Activity {
                     cv.put("total_price", dbl(price));
                     cv.put("sticker_date", stickerDate);
                     cv.put("reminder_at", ReminderScheduler.stickerReminder(stickerDate));
+                    cv.put("image_uri", pendingExtinguisherImageUri);
+                    cv.put("delivered_again", yesNo(txt(deliveredAgain)) ? 1 : 0);
                     db.update("extinguishers", cv, "id=?", String.valueOf(id));
                     saveContactIfEnabled(txt(customer), txt(phone));
                     afterSave("تم حفظ تعديل الطفايات");
@@ -912,7 +990,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(16), dp(16), dp(16), dp(16));
-        box.setBackground(rounded(BRAND_DARK, ACCENT, dp(10)));
+        box.setBackground(rounded(BRAND, ACCENT, dp(12)));
         TextView t = new TextView(this);
         t.setText(title);
         t.setTextColor(Color.WHITE);
@@ -939,7 +1017,7 @@ public class MainActivity extends Activity {
         b.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         b.setAllCaps(false);
         b.setPadding(dp(14), 0, dp(14), 0);
-        b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(10)));
+        b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(12)));
         b.setOnClickListener(v -> action.run());
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(6), 0, dp(6));
@@ -962,7 +1040,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(14), dp(12), dp(14), dp(12));
-        box.setBackground(rounded(CARD, Color.rgb(226, 232, 240), dp(8)));
+        box.setBackground(rounded(CARD, Color.rgb(226, 232, 240), dp(12)));
         TextView t = new TextView(this);
         t.setText(title);
         t.setTextColor(TEXT);
@@ -1058,19 +1136,29 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void saveAttachmentUri(Uri uri) {
+    private void chooseExtinguisherImage() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         try {
-            final int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
-            getContentResolver().takePersistableUriPermission(uri, flags);
-        } catch (Exception ignored) {
+            startActivityForResult(intent, EXTINGUISHER_IMAGE_REQUEST);
+        } catch (Exception e) {
+            toast("تعذر فتح اختيار الصورة");
         }
+    }
+
+    private void saveAttachmentUri(Uri uri) {
+        String savedUri = persistReadableUri(uri);
+        if (savedUri.isEmpty()) savedUri = uri.toString();
+        Uri finalUri = Uri.parse(savedUri);
         ContentValues cv = new ContentValues();
         cv.put("customer_name", pendingAttachmentName);
         cv.put("phone", pendingAttachmentPhone);
         cv.put("place_name", pendingAttachmentPlace);
         cv.put("location", pendingAttachmentLocation);
-        cv.put("title", attachmentTitle(uri));
-        cv.put("uri", uri.toString());
+        cv.put("title", attachmentTitle(finalUri));
+        cv.put("uri", savedUri);
         cv.put("created_at", System.currentTimeMillis());
         db.insert("customer_attachments", cv);
         afterSave("تم حفظ المرفق مع العميل");
@@ -1079,6 +1167,15 @@ public class MainActivity extends Activity {
         String status = customerStatus(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace, pendingAttachmentLocation);
         showCustomerDetails(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace,
                 pendingAttachmentLocation, status, count, total);
+    }
+
+    private String persistReadableUri(Uri uri) {
+        try {
+            final int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            getContentResolver().takePersistableUriPermission(uri, flags);
+        } catch (Exception ignored) {
+        }
+        return uri == null ? "" : uri.toString();
     }
 
     private String attachmentTitle(Uri uri) {
@@ -2115,6 +2212,17 @@ public class MainActivity extends Activity {
 
     private String displayCount(int count) {
         return count > 0 ? count + " طفاية" : "";
+    }
+
+    private boolean yesNo(String value) {
+        String normalized = normalizeDigits(value).toLowerCase(Locale.US).trim();
+        return normalized.equals("نعم") || normalized.equals("ايوه") || normalized.equals("أيوه") ||
+                normalized.equals("اي") || normalized.equals("yes") || normalized.equals("y") ||
+                normalized.equals("true") || normalized.equals("1");
+    }
+
+    private String yesNoLabel(int value) {
+        return value == 1 ? "نعم" : "لا";
     }
 
     private String money(double value) {
