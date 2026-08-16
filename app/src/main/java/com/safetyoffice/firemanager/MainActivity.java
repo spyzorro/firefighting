@@ -182,12 +182,17 @@ public class MainActivity extends Activity {
         hsv.setHorizontalScrollBarEnabled(false);
         LinearLayout tabs = new LinearLayout(this);
         tabs.setOrientation(LinearLayout.HORIZONTAL);
-        addTab(tabs, "تسجيل", R.drawable.ic_nav_extinguisher, v -> showExtinguishers());
+        addTab(tabs, "الرئيسية", R.drawable.ic_nav_home, v -> showHome());
+        addTab(tabs, "المهام", R.drawable.ic_nav_tasks, v -> showTasks());
+        addTab(tabs, "المرتبات", R.drawable.ic_nav_salary, v -> showSalaries());
+        addTab(tabs, "الطفايات", R.drawable.ic_nav_extinguisher, v -> showExtinguishers());
         addTab(tabs, "العملاء", R.drawable.ic_nav_customers, v -> showCustomers());
         addTab(tabs, "تنبيهات", R.drawable.ic_nav_alerts, v -> showAlerts());
+        addTab(tabs, "الشهادات", R.drawable.ic_nav_certificate, v -> showCertificates());
+        addTab(tabs, "الصيانة", R.drawable.ic_nav_maintenance, v -> showMaintenance());
         addTab(tabs, "التقرير", R.drawable.ic_nav_report, v -> showMonthlyReport());
-        addTab(tabs, "المهام", R.drawable.ic_nav_tasks, v -> showTasks());
-        addTab(tabs, "المزيد", R.drawable.ic_nav_settings, v -> showMore());
+        addTab(tabs, "الإعدادات", R.drawable.ic_nav_settings, v -> showSettings());
+        addTab(tabs, "Google", R.drawable.ic_nav_sync, v -> showSync());
         hsv.addView(tabs);
         root.addView(hsv, matchWrap());
 
@@ -210,7 +215,7 @@ public class MainActivity extends Activity {
         b.setCompoundDrawablePadding(dp(3));
         b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(12)));
         b.setOnClickListener(listener);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(82), dp(60));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(86), dp(62));
         lp.setMargins(dp(4), dp(10), dp(4), dp(6));
         tabs.addView(b, lp);
     }
@@ -233,23 +238,12 @@ public class MainActivity extends Activity {
         card("ملخص الشهر",
                 "نسبتك الإجمالية: " + money(shareTotal) +
                         "\nعدد شهادات السلامة: " + certificates);
-        button("تسجيل عميل وطفايات بسرعة", this::showExtinguishers);
-        section("اختصارات");
-        homeAction("العملاء", "بحث وتغيير حالة وواتساب", this::showCustomers);
-        homeAction("تنبيهات", "المواعيد القريبة والمتأخرة", this::showAlerts);
-        homeAction("التقرير", "إجماليات الشهر والنسب", this::showMonthlyReport);
-        homeAction("المزيد", "مرتبات، شهادات، صيانة، إعدادات", this::showMore);
-    }
-
-    private void showMore() {
-        currentTab = "more";
-        clear();
-        section("المزيد");
-        homeAction("المرتبات والسلف", "تسجيل المرتبات والسلف الشهرية", this::showSalaries);
-        homeAction("الشهادات والتقارير", "شهادات السلامة والتقارير الفنية", this::showCertificates);
-        homeAction("عقود الصيانة", "زيارات كل 3 شهور وتنبيهات", this::showMaintenance);
-        homeAction("الإعدادات", "النسب، واتساب، جهات الاتصال، ونسخة احتياطية", this::showSettings);
-        homeAction("مزامنة Google", "حفظ واسترجاع البيانات", this::showSync);
+        section("اختصارات سريعة");
+        homeAction("تسجيل طفايات", "إضافة عميل وصور وموقع", this::showExtinguishers);
+        homeAction("العملاء", "بحث، حالة، واتساب، وتفاصيل", this::showCustomers);
+        homeAction("تنبيهات قريبة", "طفايات وشهادات وعقود", this::showAlerts);
+        homeAction("تقرير الشهر", "الإجماليات والنسب", this::showMonthlyReport);
+        homeAction("المهام", "متابعة شغل اليوم", this::showTasks);
     }
 
     private void showTasks() {
@@ -367,27 +361,26 @@ public class MainActivity extends Activity {
         pendingExtinguisherImageUri = "";
         pendingExtinguisherImageUris.clear();
         pendingCameraImageUri = null;
-        hero("تسجيل سريع",
-                "اكتب المهم فقط، أو قول البيانات مرة واحدة. الموقع والصور بزر واحد.");
+        section("تسجيل طفايات لعميل");
         EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
-        EditText count = input("عدد الطفايات", InputType.TYPE_CLASS_NUMBER);
-        EditText price = input("إجمالي مبلغ الطفايات", numberType());
-        EditText type = input("نوع الطفاية", InputType.TYPE_CLASS_TEXT);
-        EditText weight = input("وزن الطفاية", InputType.TYPE_CLASS_TEXT);
         EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
-        EditText customerStatus = hiddenInput("حالة العميل");
+        EditText customerStatus = input("حالة العميل", InputType.TYPE_CLASS_TEXT);
         customerStatus.setText("جاري الصيانة");
-        statusInputBar(customerStatus);
-        EditText deliveredAgain = hiddenInput("استلم الطفايات تاني؟ نعم/لا");
+        EditText type = input("نوع الطفاية", InputType.TYPE_CLASS_TEXT);
+        EditText weight = input("وزن الطفاية", InputType.TYPE_CLASS_TEXT);
+        EditText count = input("عدد الطفايات", InputType.TYPE_CLASS_NUMBER);
+        EditText price = input("إجمالي مبلغ الطفايات", numberType());
+        EditText deliveredAgain = input("استلم الطفايات تاني؟ نعم/لا", InputType.TYPE_CLASS_TEXT);
         deliveredAgain.setText("لا");
         EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
-        quickImageBar();
-        voiceAllButton("قول كل البيانات مرة واحدة", customer, phone, count, price, type, weight, place, location, date);
-        small("مثال: محمد 20 طفاية بودرة CO2 120 ريال. بعد كده اضغط موقعي لو عاوز اللوكيشن الحالي.");
-        button("حفظ العميل والطفايات", () -> {
+        secondaryButton("رفع صور الطفاية من المعرض", () -> chooseExtinguisherImage());
+        secondaryButton("تصوير الطفاية بالكاميرا", () -> takeExtinguisherPhoto());
+        voiceAllButton("تسجيل سريع بالصوت: قول بيانات الطفايات مرة واحدة", customer, place, location, customerStatus, type, weight, count, price, deliveredAgain, date);
+        small("مثال: محمد 20 طفاية بودرة co2 120 ريال. رقم الموبايل اكتبه عادي، واللوكيشن اضغط موقعي.");
+        button("حفظ الطفايات وجدولة التذكير", () -> {
             if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
             try {
                 long stickerDate = ReminderScheduler.parseDate(txt(date));
@@ -428,12 +421,7 @@ public class MainActivity extends Activity {
                 toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
             }
         });
-        secondaryButton("عرض آخر عمليات الطفايات", this::showRecentExtinguishers);
-    }
 
-    private void showRecentExtinguishers() {
-        currentTab = "recent_extinguishers";
-        clear();
         section("آخر عمليات الطفايات");
         Cursor c = db.all("extinguishers");
         try {
@@ -456,7 +444,6 @@ public class MainActivity extends Activity {
         } finally {
             c.close();
         }
-        secondaryButton("رجوع للتسجيل السريع", this::showExtinguishers);
     }
 
     private void showCustomers() {
@@ -699,7 +686,6 @@ public class MainActivity extends Activity {
     }
 
     private void showExtinguisherEdit(long id) {
-        currentTab = "extinguisher_edit";
         clear();
         section("تعديل بيانات الطفايات");
         Cursor c = db.raw("SELECT * FROM extinguishers WHERE id=?", String.valueOf(id));
@@ -759,7 +745,7 @@ public class MainActivity extends Activity {
                     saveExtinguisherImages(id, pendingExtinguisherImageUris);
                     saveContactIfEnabled(txt(customer), txt(phone));
                     afterSave("تم حفظ تعديل الطفايات");
-                    openCustomerDetails(txt(customer), txt(phone), txt(place), txt(location));
+                    showCustomers();
                 } catch (Exception ex) {
                     toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
                 }
@@ -1162,9 +1148,8 @@ public class MainActivity extends Activity {
         b.setTextSize(15);
         b.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         b.setAllCaps(false);
-        b.setPadding(dp(16), dp(6), dp(16), dp(6));
-        b.setMinHeight(dp(64));
-        b.setBackground(rounded(Color.WHITE, Color.rgb(226, 232, 240), dp(10)));
+        b.setPadding(dp(14), 0, dp(14), 0);
+        b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(12)));
         b.setOnClickListener(v -> action.run());
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(6), 0, dp(6));
@@ -1186,8 +1171,8 @@ public class MainActivity extends Activity {
     private void card(String title, String body) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(16), dp(14), dp(16), dp(14));
-        box.setBackground(rounded(CARD, Color.rgb(226, 232, 240), dp(10)));
+        box.setPadding(dp(14), dp(12), dp(14), dp(12));
+        box.setBackground(rounded(CARD, Color.rgb(226, 232, 240), dp(12)));
         TextView t = new TextView(this);
         t.setText(title);
         t.setTextColor(TEXT);
@@ -1215,7 +1200,7 @@ public class MainActivity extends Activity {
             box.addView(open, openLp);
         }
         LinearLayout.LayoutParams lp = matchWrap();
-        lp.setMargins(0, dp(5), 0, dp(10));
+        lp.setMargins(0, dp(5), 0, dp(9));
         content.addView(box, lp);
     }
 
@@ -1838,64 +1823,6 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(3), 0, dp(8));
         content.addView(b, lp);
-    }
-
-    private EditText hiddenInput(String hint) {
-        EditText et = new EditText(this);
-        et.setHint(hint);
-        et.setInputType(InputType.TYPE_CLASS_TEXT);
-        return et;
-    }
-
-    private void statusInputBar(EditText statusTarget) {
-        small("حالة العميل: " + txt(statusTarget));
-        HorizontalScrollView hsv = new HorizontalScrollView(this);
-        hsv.setHorizontalScrollBarEnabled(false);
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        for (String status : customerStatuses()) {
-            Button b = new Button(this);
-            b.setText(status);
-            b.setTextColor(BRAND_DARK);
-            b.setTextSize(13);
-            b.setAllCaps(false);
-            b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(16)));
-            b.setOnClickListener(v -> {
-                statusTarget.setText(status);
-                toast("الحالة: " + status);
-            });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
-            lp.setMargins(dp(4), 0, dp(4), dp(6));
-            row.addView(b, lp);
-        }
-        hsv.addView(row);
-        content.addView(hsv, matchWrap());
-    }
-
-    private void quickImageBar() {
-        small("صور الطفايات اختيارية، ممكن تختار أكتر من صورة أو تصور بالكاميرا.");
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER);
-        row.addView(compactActionButton("المعرض", this::chooseExtinguisherImage), new LinearLayout.LayoutParams(0, dp(48), 1));
-        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(dp(8), 1);
-        TextView spacer = new TextView(this);
-        row.addView(spacer, gap);
-        row.addView(compactActionButton("الكاميرا", this::takeExtinguisherPhoto), new LinearLayout.LayoutParams(0, dp(48), 1));
-        LinearLayout.LayoutParams lp = matchWrap();
-        lp.setMargins(0, dp(4), 0, dp(8));
-        content.addView(row, lp);
-    }
-
-    private Button compactActionButton(String text, Runnable action) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setTextColor(BRAND_DARK);
-        b.setTextSize(14);
-        b.setAllCaps(false);
-        b.setBackground(rounded(Color.WHITE, Color.rgb(248, 113, 113), dp(14)));
-        b.setOnClickListener(v -> action.run());
-        return b;
     }
 
     private void fillCurrentLocation(EditText target) {
