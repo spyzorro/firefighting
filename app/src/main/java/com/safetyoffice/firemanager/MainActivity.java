@@ -2,6 +2,7 @@ package com.safetyoffice.firemanager;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ContentProviderOperation;
 import android.content.ActivityNotFoundException;
 import android.content.ContentValues;
 import android.content.Intent;
@@ -15,6 +16,7 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.ContactsContract;
 import android.speech.RecognizerIntent;
 import android.text.InputType;
 import android.view.Gravity;
@@ -39,6 +41,7 @@ public class MainActivity extends Activity {
     private static final int VOICE_REQUEST = 5042;
     private static final int RECORD_AUDIO_REQUEST = 5043;
     private static final int LOCATION_REQUEST = 5044;
+    private static final int CONTACTS_REQUEST = 5045;
     private static final int BRAND = Color.rgb(185, 28, 28);
     private static final int BRAND_DARK = Color.rgb(69, 10, 10);
     private static final int BRAND_LIGHT = Color.rgb(254, 242, 242);
@@ -100,6 +103,18 @@ public class MainActivity extends Activity {
             }
             if (granted) fillCurrentLocation(locationTarget);
             else toast("لازم تسمح للتطبيق باستخدام الموقع علشان زر موقعي يشتغل");
+        } else if (requestCode == CONTACTS_REQUEST) {
+            boolean granted = true;
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) granted = false;
+            }
+            if (granted) {
+                db.setSetting("auto_save_contacts", "1");
+                toast("تم تشغيل حفظ جهات الاتصال تلقائيا");
+                showSettings();
+            } else {
+                toast("لازم تسمح بجهات الاتصال علشان الحفظ التلقائي يشتغل");
+            }
         }
     }
 
@@ -165,18 +180,18 @@ public class MainActivity extends Activity {
     private void showHome() {
         currentTab = "home";
         clear();
-        section("ملخص سريع");
         double total = singleDouble("SELECT COALESCE(SUM(total_price),0) FROM extinguishers");
         int count = (int) singleDouble("SELECT COALESCE(SUM(count),0) FROM extinguishers");
         int customers = (int) singleDouble("SELECT COUNT(*) FROM customers");
         int maintenance = (int) singleDouble("SELECT COUNT(*) FROM maintenance_contracts");
-        card("لوحة المتابعة",
-                "كل شغلك في مكان واحد: تسجيل سريع بالصوت، فتح خرائط، رسالة واتساب جاهزة للعميل، ونسب شهرية قابلة للتعديل.");
-        card("إجمالي الطفايات", count + " طفاية");
-        card("إجمالي مبلغ الطفايات", money(total));
-        card("العملاء المسجلين", customers + " عميل");
-        card("عقود الصيانة", maintenance + " عقد");
-        small("ابدأ من أي تبويب بالأعلى. اضغط صوت للإدخال بالكلام، أو موقعي بجانب اللوكيشن لحفظ رابط Google Maps الحالي. كل البيانات محفوظة محليا، ولو سجلت Google سيتم رفع نسخة تلقائيا.");
+        hero("لوحة التحكم",
+                "الطفايات: " + count + " | العملاء: " + customers + " | العقود: " + maintenance +
+                        "\nإجمالي مبالغ الطفايات: " + money(total));
+        section("ابدأ بسرعة");
+        homeAction("تسجيل طفايات جديدة", "صوت، موقع، اسم مكان، وسعر بالريال", this::showExtinguishers);
+        homeAction("فتح العملاء", "تعديل صفحة منفصلة ورسائل واتساب جاهزة", this::showCustomers);
+        homeAction("تقرير الشهر", "عدد الطفايات والإجماليات والنسب", this::showMonthlyReport);
+        homeAction("الإعدادات والمزامنة", "النسب، قوالب واتساب، وجهات الاتصال", this::showSettings);
     }
 
     private void showSalaries() {
@@ -244,6 +259,7 @@ public class MainActivity extends Activity {
         section("تسجيل طفايات لعميل");
         EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
+        EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
         EditText type = input("نوع الطفاية", InputType.TYPE_CLASS_TEXT);
         EditText weight = input("وزن الطفاية", InputType.TYPE_CLASS_TEXT);
@@ -251,7 +267,7 @@ public class MainActivity extends Activity {
         EditText price = input("إجمالي مبلغ الطفايات", numberType());
         EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
-        voiceAllButton("تسجيل سريع بالصوت: قول بيانات الطفايات مرة واحدة", customer, location, type, weight, count, price, date);
+        voiceAllButton("تسجيل سريع بالصوت: قول بيانات الطفايات مرة واحدة", customer, place, location, type, weight, count, price, date);
         small("مثال: محمد 20 طفاية بودرة co2 120 ريال. رقم الموبايل اكتبه عادي، واللوكيشن اضغط موقعي.");
         button("حفظ الطفايات وجدولة التذكير", () -> {
             if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
@@ -262,6 +278,7 @@ public class MainActivity extends Activity {
                 ContentValues ccv = new ContentValues();
                 ccv.put("name", txt(customer));
                 ccv.put("phone", txt(phone));
+                ccv.put("place_name", txt(place));
                 ccv.put("location", txt(location));
                 ccv.put("created_at", System.currentTimeMillis());
                 long customerId = db.insert("customers", ccv);
@@ -270,6 +287,7 @@ public class MainActivity extends Activity {
                 cv.put("customer_id", customerId);
                 cv.put("customer_name", txt(customer));
                 cv.put("phone", txt(phone));
+                cv.put("place_name", txt(place));
                 cv.put("location", txt(location));
                 cv.put("extinguisher_type", txt(type));
                 cv.put("weight", txt(weight));
@@ -279,6 +297,7 @@ public class MainActivity extends Activity {
                 cv.put("reminder_at", reminder);
                 cv.put("created_at", System.currentTimeMillis());
                 db.insert("extinguishers", cv);
+                saveContactIfEnabled(txt(customer), txt(phone));
                 afterSave("تم حفظ الطفايات والتنبيه يوم " + ReminderScheduler.formatDate(reminder));
                 showExtinguishers();
             } catch (Exception ex) {
@@ -290,7 +309,6 @@ public class MainActivity extends Activity {
         Cursor c = db.all("extinguishers");
         try {
             while (c.moveToNext()) {
-                long id = c.getLong(c.getColumnIndexOrThrow("id"));
                 String oldCustomer = c.getString(c.getColumnIndexOrThrow("customer_name"));
                 card(oldCustomer,
                         "عدد: " + c.getInt(c.getColumnIndexOrThrow("count")) +
@@ -298,35 +316,9 @@ public class MainActivity extends Activity {
                                 "\nوزن: " + val(c, "weight") +
                                 "\nمبلغ: " + money(c.getDouble(c.getColumnIndexOrThrow("total_price"))) +
                                 "\nالتذكير: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("reminder_at"))) +
-                                "\nرقم: " + val(c, "phone") + "\nلوكيشن: " + val(c, "location"));
-                EditText editCustomer = input("تعديل اسم العميل", InputType.TYPE_CLASS_TEXT);
-                editCustomer.setText(oldCustomer);
-                EditText editPhone = input("تعديل رقم العميل", InputType.TYPE_CLASS_PHONE);
-                editPhone.setText(val(c, "phone"));
-                EditText editLocation = input("تعديل اللوكيشن", InputType.TYPE_CLASS_TEXT);
-                editLocation.setText(val(c, "location"));
-                EditText editType = input("تعديل نوع الطفاية", InputType.TYPE_CLASS_TEXT);
-                editType.setText(val(c, "extinguisher_type"));
-                EditText editWeight = input("تعديل وزن الطفاية", InputType.TYPE_CLASS_TEXT);
-                editWeight.setText(val(c, "weight"));
-                EditText editCount = input("تعديل عدد الطفايات", InputType.TYPE_CLASS_NUMBER);
-                editCount.setText(String.valueOf(c.getInt(c.getColumnIndexOrThrow("count"))));
-                EditText editPrice = input("تعديل إجمالي مبلغ الطفايات", numberType());
-                editPrice.setText(cleanNumber(c.getDouble(c.getColumnIndexOrThrow("total_price"))));
-                button("حفظ تعديل عملية الطفايات", () -> {
-                    if (empty(editCustomer) || empty(editCount) || empty(editPrice)) return;
-                    ContentValues cv = new ContentValues();
-                    cv.put("customer_name", txt(editCustomer));
-                    cv.put("phone", txt(editPhone));
-                    cv.put("location", txt(editLocation));
-                    cv.put("extinguisher_type", txt(editType));
-                    cv.put("weight", txt(editWeight));
-                    cv.put("count", integer(editCount));
-                    cv.put("total_price", dbl(editPrice));
-                    db.update("extinguishers", cv, "id=?", String.valueOf(id));
-                    afterSave("تم تعديل عملية الطفايات");
-                    showExtinguishers();
-                });
+                                "\nرقم: " + val(c, "phone") +
+                                "\nاسم المكان: " + val(c, "place_name") +
+                                "\nلوكيشن: " + val(c, "location"));
             }
         } finally {
             c.close();
@@ -337,26 +329,28 @@ public class MainActivity extends Activity {
         currentTab = "customers";
         clear();
         section("العملاء");
-        Cursor c = db.raw("SELECT customer_name, phone, location, SUM(total_count) total_count, SUM(total_price) total_price " +
+        Cursor c = db.raw("SELECT customer_name, phone, place_name, location, SUM(total_count) total_count, SUM(total_price) total_price " +
                 "FROM (" +
-                "SELECT customer_name, phone, location, SUM(count) total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM extinguishers GROUP BY customer_name, phone, location " +
-                "UNION ALL SELECT customer_name, phone, location, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM safety_certificates GROUP BY customer_name, phone, location " +
-                "UNION ALL SELECT customer_name, phone, location, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM technical_reports GROUP BY customer_name, phone, location " +
-                "UNION ALL SELECT customer_name, phone, location, 0 total_count, 0 total_price, MAX(created_at) last_at FROM maintenance_contracts GROUP BY customer_name, phone, location" +
-                ") GROUP BY customer_name, phone, location ORDER BY MAX(last_at) DESC");
+                "SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, SUM(count) total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM extinguishers GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,'') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM safety_certificates GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,'') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM technical_reports GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,'') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, 0 total_count, 0 total_price, MAX(created_at) last_at FROM maintenance_contracts GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,'')" +
+                ") GROUP BY customer_name, phone, place_name, location ORDER BY MAX(last_at) DESC");
         try {
             while (c.moveToNext()) {
                 String oldName = c.getString(0);
                 String oldPhone = emptyForDb(c.getString(1));
-                String oldLocation = emptyForDb(c.getString(2));
-                int extinguisherCount = c.getInt(3);
-                double totalPrice = c.getDouble(4);
+                String oldPlace = emptyForDb(c.getString(2));
+                String oldLocation = emptyForDb(c.getString(3));
+                int extinguisherCount = c.getInt(4);
+                double totalPrice = c.getDouble(5);
                 card(oldName,
                         "رقم: " + safe(oldPhone) +
+                                "\nاسم المكان: " + safe(oldPlace) +
                                 "\nلوكيشن: " + safe(oldLocation) +
-                                "\nإجمالي الطفايات: " + extinguisherCount +
+                                "\nإجمالي الطفايات: " + displayCount(extinguisherCount) +
                                 "\nإجمالي المبلغ: " + money(totalPrice));
-                secondaryButton("تعديل بيانات العميل", () -> showCustomerDetails(oldName, oldPhone, oldLocation, extinguisherCount, totalPrice));
+                secondaryButton("تعديل بيانات العميل", () -> showCustomerDetails(oldName, oldPhone, oldPlace, oldLocation, extinguisherCount, totalPrice));
                 secondaryButton("رسالة واتساب للعميل", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
             }
         } finally {
@@ -364,15 +358,16 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void showCustomerDetails(String oldName, String oldPhone, String oldLocation,
+    private void showCustomerDetails(String oldName, String oldPhone, String oldPlace, String oldLocation,
                                      int extinguisherCount, double totalPrice) {
         currentTab = "customer_detail";
         clear();
         section("صفحة العميل");
         card(oldName,
                 "رقم: " + safe(oldPhone) +
+                        "\nاسم المكان: " + safe(oldPlace) +
                         "\nلوكيشن: " + safe(oldLocation) +
-                        "\nإجمالي الطفايات: " + extinguisherCount +
+                        "\nإجمالي الطفايات: " + displayCount(extinguisherCount) +
                         "\nإجمالي المبلغ: " + money(totalPrice));
         secondaryButton("رسالة واتساب جاهزة", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
         secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
@@ -382,33 +377,38 @@ public class MainActivity extends Activity {
         name.setText(oldName);
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
         phone.setText(oldPhone);
+        EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
+        place.setText(oldPlace);
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
         location.setText(oldLocation);
         button("حفظ وإغلاق صفحة العميل", () -> {
             if (empty(name)) return;
-            db.updateCustomerEverywhere(oldName, oldPhone, oldLocation, txt(name), txt(phone), txt(location));
+            db.updateCustomerEverywhere(oldName, oldPhone, oldPlace, oldLocation, txt(name), txt(phone), txt(place), txt(location));
+            saveContactIfEnabled(txt(name), txt(phone));
             afterSave("تم حفظ بيانات العميل والرجوع للقائمة");
             showCustomers();
         });
         secondaryButton("إغلاق بدون حفظ", this::showCustomers);
 
         section("كل بيانات العميل");
-        listCustomerRecords(oldName, oldPhone, oldLocation);
+        listCustomerRecords(oldName, oldPhone, oldPlace, oldLocation);
     }
 
-    private void listCustomerRecords(String name, String phone, String location) {
-        String[] args = customerArgs(name, phone, location);
-        Cursor e = db.raw("SELECT extinguisher_type, weight, count, total_price, sticker_date, reminder_at FROM extinguishers " +
-                "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
+    private void listCustomerRecords(String name, String phone, String place, String location) {
+        String[] args = customerArgs(name, phone, place, location);
+        Cursor e = db.raw("SELECT id, extinguisher_type, weight, count, total_price, sticker_date, reminder_at FROM extinguishers " +
+                "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
         try {
             while (e.moveToNext()) {
+                long id = e.getLong(0);
                 card("طفايات",
-                        "النوع: " + safe(e.getString(0)) +
-                                "\nالوزن: " + safe(e.getString(1)) +
-                                "\nالعدد: " + e.getInt(2) +
-                                "\nالمبلغ: " + money(e.getDouble(3)) +
-                                "\nتاريخ الاستيكر: " + ReminderScheduler.formatDate(e.getLong(4)) +
-                                "\nالتذكير: " + ReminderScheduler.formatDate(e.getLong(5)));
+                        "النوع: " + safe(e.getString(1)) +
+                                "\nالوزن: " + safe(e.getString(2)) +
+                                "\nالعدد: " + e.getInt(3) +
+                                "\nالمبلغ: " + money(e.getDouble(4)) +
+                                "\nتاريخ الاستيكر: " + ReminderScheduler.formatDate(e.getLong(5)) +
+                                "\nالتذكير: " + ReminderScheduler.formatDate(e.getLong(6)));
+                secondaryButton("تعديل بيانات الطفايات", () -> showExtinguisherEdit(id));
             }
         } finally {
             e.close();
@@ -418,7 +418,7 @@ public class MainActivity extends Activity {
         listCustomerAnnualRecords("technical_reports", "report_date", "تقرير فني", args);
 
         Cursor m = db.raw("SELECT start_date, next_visit_at, reminder_at FROM maintenance_contracts " +
-                "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
+                "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
         try {
             while (m.moveToNext()) {
                 card("عقد صيانة",
@@ -433,7 +433,7 @@ public class MainActivity extends Activity {
 
     private void listCustomerAnnualRecords(String table, String dateColumn, String label, String[] args) {
         Cursor c = db.raw("SELECT " + dateColumn + ", total_price, reminder_at FROM " + table +
-                " WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
+                " WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
         try {
             while (c.moveToNext()) {
                 card(label,
@@ -446,8 +446,65 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String[] customerArgs(String name, String phone, String location) {
-        return new String[]{name, safe(phone), safe(location)};
+    private String[] customerArgs(String name, String phone, String place, String location) {
+        return new String[]{name, emptyForDb(phone), emptyForDb(place), emptyForDb(location)};
+    }
+
+    private void showExtinguisherEdit(long id) {
+        clear();
+        section("تعديل بيانات الطفايات");
+        Cursor c = db.raw("SELECT * FROM extinguishers WHERE id=?", String.valueOf(id));
+        try {
+            if (!c.moveToFirst()) {
+                toast("السجل غير موجود");
+                showCustomers();
+                return;
+            }
+            EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
+            customer.setText(rawVal(c, "customer_name"));
+            EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
+            phone.setText(rawVal(c, "phone"));
+            EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
+            place.setText(rawVal(c, "place_name"));
+            EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
+            location.setText(rawVal(c, "location"));
+            EditText type = input("نوع الطفاية", InputType.TYPE_CLASS_TEXT);
+            type.setText(rawVal(c, "extinguisher_type"));
+            EditText weight = input("وزن الطفاية", InputType.TYPE_CLASS_TEXT);
+            weight.setText(rawVal(c, "weight"));
+            EditText count = input("عدد الطفايات", InputType.TYPE_CLASS_NUMBER);
+            count.setText(String.valueOf(c.getInt(c.getColumnIndexOrThrow("count"))));
+            EditText price = input("إجمالي مبلغ الطفايات", numberType());
+            price.setText(cleanNumber(c.getDouble(c.getColumnIndexOrThrow("total_price"))));
+            EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
+            date.setText(ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("sticker_date"))));
+            button("حفظ وإغلاق تعديل الطفايات", () -> {
+                if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
+                try {
+                    long stickerDate = ReminderScheduler.parseDate(txt(date));
+                    ContentValues cv = new ContentValues();
+                    cv.put("customer_name", txt(customer));
+                    cv.put("phone", txt(phone));
+                    cv.put("place_name", txt(place));
+                    cv.put("location", txt(location));
+                    cv.put("extinguisher_type", txt(type));
+                    cv.put("weight", txt(weight));
+                    cv.put("count", integer(count));
+                    cv.put("total_price", dbl(price));
+                    cv.put("sticker_date", stickerDate);
+                    cv.put("reminder_at", ReminderScheduler.stickerReminder(stickerDate));
+                    db.update("extinguishers", cv, "id=?", String.valueOf(id));
+                    saveContactIfEnabled(txt(customer), txt(phone));
+                    afterSave("تم حفظ تعديل الطفايات");
+                    showCustomers();
+                } catch (Exception ex) {
+                    toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
+                }
+            });
+            secondaryButton("إغلاق بدون حفظ", this::showCustomers);
+        } finally {
+            c.close();
+        }
     }
 
     private void showCertificates() {
@@ -465,11 +522,12 @@ public class MainActivity extends Activity {
     private void certificateForm(String table, String dateColumn, String buttonText) {
         EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
+        EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
         EditText amount = input("مبلغ/سعر البند", numberType());
         EditText date = input("تاريخ البداية yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
-        voiceAllButton("قول كل البيانات مرة واحدة", customer, location, amount, date);
+        voiceAllButton("قول كل البيانات مرة واحدة", customer, place, location, amount, date);
         button(buttonText, () -> {
             if (empty(customer) || empty(date)) return;
             try {
@@ -478,12 +536,14 @@ public class MainActivity extends Activity {
                 ContentValues cv = new ContentValues();
                 cv.put("customer_name", txt(customer));
                 cv.put("phone", txt(phone));
+                cv.put("place_name", txt(place));
                 cv.put("location", txt(location));
                 cv.put("total_price", dbl(amount));
                 cv.put(dateColumn, base);
                 cv.put("reminder_at", reminder);
                 cv.put("created_at", System.currentTimeMillis());
                 db.insert(table, cv);
+                saveContactIfEnabled(txt(customer), txt(phone));
                 afterSave("تم الحفظ والتنبيه يوم " + ReminderScheduler.formatDate(reminder));
                 showCertificates();
             } catch (Exception e) {
@@ -498,10 +558,11 @@ public class MainActivity extends Activity {
         section("عقود الصيانة");
         EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
+        EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
         EditText start = input("تاريخ بداية العقد yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         start.setText(today());
-        voiceAllButton("قول بيانات عقد الصيانة مرة واحدة", customer, location, start);
+        voiceAllButton("قول بيانات عقد الصيانة مرة واحدة", customer, place, location, start);
         button("حفظ عقد الصيانة", () -> {
             if (empty(customer) || empty(start)) return;
             try {
@@ -511,12 +572,14 @@ public class MainActivity extends Activity {
                 ContentValues cv = new ContentValues();
                 cv.put("customer_name", txt(customer));
                 cv.put("phone", txt(phone));
+                cv.put("place_name", txt(place));
                 cv.put("location", txt(location));
                 cv.put("start_date", startDate);
                 cv.put("next_visit_at", visit);
                 cv.put("reminder_at", reminder);
                 cv.put("created_at", System.currentTimeMillis());
                 db.insert("maintenance_contracts", cv);
+                saveContactIfEnabled(txt(customer), txt(phone));
                 afterSave("تم الحفظ. الزيارة " + ReminderScheduler.formatDate(visit) +
                         " والتنبيه " + ReminderScheduler.formatDate(reminder));
                 showMaintenance();
@@ -532,7 +595,9 @@ public class MainActivity extends Activity {
                 card(c.getString(c.getColumnIndexOrThrow("customer_name")),
                         "الزيارة القادمة: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("next_visit_at"))) +
                                 "\nالتنبيه قبلها: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("reminder_at"))) +
-                                "\nرقم: " + val(c, "phone") + "\nلوكيشن: " + val(c, "location"));
+                                "\nرقم: " + val(c, "phone") +
+                                "\nاسم المكان: " + val(c, "place_name") +
+                                "\nلوكيشن: " + val(c, "location"));
             }
         } finally {
             c.close();
@@ -609,6 +674,22 @@ public class MainActivity extends Activity {
         });
         small("كل نسبة تتحسب في تقرير الشهر على إجمالي مبلغ البند الخاص بها.");
 
+        section("جهات الاتصال");
+        boolean contactsEnabled = "1".equals(db.setting("auto_save_contacts", "0"));
+        card("حفظ العملاء في جهات الاتصال",
+                contactsEnabled ? "شغال: أي عميل جديد باسمه ورقمه يتحفظ باسم العميل - عميل طفايات لو الرقم مش محفوظ." :
+                        "مقفول: فعل الاختيار لو عايز العملاء الجدد يتحفظوا تلقائيا على الموبايل.");
+        button(contactsEnabled ? "إيقاف حفظ جهات الاتصال" : "تشغيل حفظ جهات الاتصال", () -> {
+            if (contactsEnabled) {
+                db.setSetting("auto_save_contacts", "0");
+                afterSave("تم إيقاف حفظ جهات الاتصال");
+                showSettings();
+            } else {
+                enableContactSaving();
+            }
+        });
+        small("الحفظ يتم فقط لو اسم العميل ورقم الموبايل موجودين مع بعض، ولو الرقم محفوظ قبل كده مش هيتكرر.");
+
         section("رسائل واتساب");
         String[] templates = whatsappTemplates();
         int selected = selectedWhatsappTemplateIndex(templates.length);
@@ -660,7 +741,9 @@ public class MainActivity extends Activity {
                         "التاريخ: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow(dateColumn))) +
                                 "\nالمبلغ: " + money(c.getDouble(c.getColumnIndexOrThrow("total_price"))) +
                                 "\nالتذكير: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("reminder_at"))) +
-                                "\nرقم: " + val(c, "phone") + "\nلوكيشن: " + val(c, "location"));
+                                "\nرقم: " + val(c, "phone") +
+                                "\nاسم المكان: " + val(c, "place_name") +
+                                "\nلوكيشن: " + val(c, "location"));
             }
         } finally {
             c.close();
@@ -681,6 +764,44 @@ public class MainActivity extends Activity {
 
     private void clear() {
         content.removeAllViews();
+    }
+
+    private void hero(String title, String body) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(16), dp(16), dp(16));
+        box.setBackground(rounded(BRAND_DARK, ACCENT, dp(10)));
+        TextView t = new TextView(this);
+        t.setText(title);
+        t.setTextColor(Color.WHITE);
+        t.setTextSize(23);
+        t.setTypeface(null, 1);
+        t.setGravity(Gravity.RIGHT);
+        TextView b = new TextView(this);
+        b.setText(body);
+        b.setTextColor(Color.rgb(255, 237, 213));
+        b.setTextSize(15);
+        b.setGravity(Gravity.RIGHT);
+        box.addView(t, matchWrap());
+        box.addView(b, matchWrap());
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(4), 0, dp(10));
+        content.addView(box, lp);
+    }
+
+    private void homeAction(String title, String subtitle, Runnable action) {
+        Button b = new Button(this);
+        b.setText(title + "\n" + subtitle);
+        b.setTextColor(TEXT);
+        b.setTextSize(15);
+        b.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        b.setAllCaps(false);
+        b.setPadding(dp(14), 0, dp(14), 0);
+        b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(10)));
+        b.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(6), 0, dp(6));
+        content.addView(b, lp);
     }
 
     private void section(String text) {
@@ -787,10 +908,11 @@ public class MainActivity extends Activity {
         String[] templates = whatsappTemplates();
         int selected = selectedWhatsappTemplateIndex(templates.length);
         String template = templates[selected];
+        String countText = extinguisherCount > 0 ? String.valueOf(extinguisherCount) : "";
         String message = template
                 .replace("{name}", safe(customerName))
-                .replace("{count}", String.valueOf(extinguisherCount));
-        if (!template.contains("{count}")) {
+                .replace("{count}", countText);
+        if (!template.contains("{count}") && extinguisherCount > 0) {
             message = message + "\nعدد الطفايات المسجلة عندكم: " + extinguisherCount + " طفاية.";
         }
         Uri uri = Uri.parse("https://wa.me/" + normalizedPhone + "?text=" + Uri.encode(message));
@@ -808,6 +930,63 @@ public class MainActivity extends Activity {
         if (digits.length() == 10 && digits.startsWith("05")) return "966" + digits.substring(1);
         if (digits.length() == 9 && digits.startsWith("5")) return "966" + digits;
         return digits;
+    }
+
+    private void enableContactSaving() {
+        if (!hasContactsPermission()) {
+            requestPermissions(new String[]{
+                    Manifest.permission.READ_CONTACTS,
+                    Manifest.permission.WRITE_CONTACTS
+            }, CONTACTS_REQUEST);
+            return;
+        }
+        db.setSetting("auto_save_contacts", "1");
+        afterSave("تم تشغيل حفظ جهات الاتصال تلقائيا");
+        showSettings();
+    }
+
+    private boolean hasContactsPermission() {
+        return Build.VERSION.SDK_INT < 23 ||
+                (checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED &&
+                        checkSelfPermission(Manifest.permission.WRITE_CONTACTS) == PackageManager.PERMISSION_GRANTED);
+    }
+
+    private void saveContactIfEnabled(String name, String phone) {
+        if (!"1".equals(db.setting("auto_save_contacts", "0"))) return;
+        if (name == null || name.trim().isEmpty() || phone == null || phone.trim().isEmpty()) return;
+        if (!hasContactsPermission()) return;
+        try {
+            if (contactExists(phone)) return;
+            ArrayList<ContentProviderOperation> ops = new ArrayList<>();
+            ops.add(ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
+                    .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, null)
+                    .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, null)
+                    .build());
+            ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                    .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name.trim() + " - عميل طفايات")
+                    .build());
+            ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                    .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, phone.trim())
+                    .withValue(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
+                    .build());
+            getContentResolver().applyBatch(ContactsContract.AUTHORITY, ops);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private boolean contactExists(String phone) {
+        Uri uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(phone));
+        Cursor c = getContentResolver().query(uri, new String[]{ContactsContract.PhoneLookup._ID}, null, null, null);
+        if (c == null) return false;
+        try {
+            return c.moveToFirst();
+        } finally {
+            c.close();
+        }
     }
 
     private String[] whatsappTemplates() {
@@ -1363,8 +1542,9 @@ public class MainActivity extends Activity {
     private String[] keysForHint(String hint) {
         if (hint.contains("اسم العميل")) return new String[]{"اسم العميل", "العميل", "عميل", "اسم"};
         if (hint.contains("اسم الشخص")) return new String[]{"اسم الشخص", "الشخص", "الموظف", "اسم"};
+        if (hint.contains("اسم المكان")) return new String[]{"اسم المكان", "المكان", "الفرع", "اسم الفرع"};
         if (hint.contains("رقم")) return new String[]{"رقم العميل", "رقم", "الموبايل", "التليفون", "الهاتف"};
-        if (hint.contains("لوكيشن")) return new String[]{"اللوكيشن", "لوكيشن", "الموقع", "العنوان", "مكان"};
+        if (hint.contains("لوكيشن")) return new String[]{"اللوكيشن", "لوكيشن", "الموقع", "العنوان"};
         if (hint.contains("نوع")) return new String[]{"نوع الطفايه", "نوع الطفاية", "النوع", "نوع"};
         if (hint.contains("وزن")) return new String[]{"وزن الطفايه", "وزن الطفاية", "الوزن", "وزن"};
         if (hint.contains("عدد")) return new String[]{"عدد الطفايات", "العدد", "عدد"};
@@ -1383,8 +1563,9 @@ public class MainActivity extends Activity {
     private String[] allVoiceKeys() {
         return new String[]{
                 "اسم العميل", "العميل", "عميل", "اسم الشخص", "الشخص", "الموظف",
+                "اسم المكان", "المكان", "الفرع", "اسم الفرع",
                 "رقم العميل", "رقم", "الموبايل", "التليفون", "الهاتف",
-                "اللوكيشن", "لوكيشن", "الموقع", "العنوان", "مكان",
+                "اللوكيشن", "لوكيشن", "الموقع", "العنوان",
                 "نوع الطفايه", "نوع الطفاية", "النوع", "نوع",
                 "وزن الطفايه", "وزن الطفاية", "الوزن", "وزن",
                 "عدد الطفايات", "العدد", "عدد",
@@ -1592,6 +1773,10 @@ public class MainActivity extends Activity {
         return safe(value);
     }
 
+    private String rawVal(Cursor c, String column) {
+        return emptyForDb(c.getString(c.getColumnIndexOrThrow(column)));
+    }
+
     private String safe(String value) {
         return value == null || value.trim().isEmpty() ? "-" : value;
     }
@@ -1600,8 +1785,12 @@ public class MainActivity extends Activity {
         return value == null ? "" : value;
     }
 
+    private String displayCount(int count) {
+        return count > 0 ? count + " طفاية" : "";
+    }
+
     private String money(double value) {
-        return String.format(Locale.US, "%.2f", value) + " جنيه";
+        return String.format(Locale.US, "%.2f", value) + " ريال سعودي";
     }
 
     private void toast(String text) {

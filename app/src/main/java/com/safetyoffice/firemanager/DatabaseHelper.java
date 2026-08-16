@@ -14,7 +14,7 @@ import java.util.List;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String DB_NAME = "fire_salary_manager.db";
-    public static final int DB_VERSION = 4;
+    public static final int DB_VERSION = 5;
 
     private static final List<String> TABLES = Arrays.asList(
             "employees", "advances", "customers", "extinguishers",
@@ -37,24 +37,24 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
         db.execSQL("CREATE TABLE customers (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT, " +
-                "location TEXT, created_at INTEGER NOT NULL)");
+                "place_name TEXT, location TEXT, created_at INTEGER NOT NULL)");
 
         db.execSQL("CREATE TABLE extinguishers (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER, customer_name TEXT NOT NULL, " +
-                "phone TEXT, location TEXT, extinguisher_type TEXT, weight TEXT, count INTEGER NOT NULL, " +
+                "phone TEXT, place_name TEXT, location TEXT, extinguisher_type TEXT, weight TEXT, count INTEGER NOT NULL, " +
                 "total_price REAL NOT NULL, sticker_date INTEGER NOT NULL, reminder_at INTEGER NOT NULL, created_at INTEGER NOT NULL)");
 
         db.execSQL("CREATE TABLE safety_certificates (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
-                "location TEXT, total_price REAL DEFAULT 0, certificate_date INTEGER NOT NULL, reminder_at INTEGER NOT NULL, created_at INTEGER NOT NULL)");
+                "place_name TEXT, location TEXT, total_price REAL DEFAULT 0, certificate_date INTEGER NOT NULL, reminder_at INTEGER NOT NULL, created_at INTEGER NOT NULL)");
 
         db.execSQL("CREATE TABLE technical_reports (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
-                "location TEXT, total_price REAL DEFAULT 0, report_date INTEGER NOT NULL, reminder_at INTEGER NOT NULL, created_at INTEGER NOT NULL)");
+                "place_name TEXT, location TEXT, total_price REAL DEFAULT 0, report_date INTEGER NOT NULL, reminder_at INTEGER NOT NULL, created_at INTEGER NOT NULL)");
 
         db.execSQL("CREATE TABLE maintenance_contracts (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
-                "location TEXT, start_date INTEGER NOT NULL, next_visit_at INTEGER NOT NULL, " +
+                "place_name TEXT, location TEXT, start_date INTEGER NOT NULL, next_visit_at INTEGER NOT NULL, " +
                 "reminder_at INTEGER NOT NULL, created_at INTEGER NOT NULL)");
 
         createSettings(db);
@@ -73,6 +73,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (oldVersion < 4) {
             createSettings(db);
             replaceWhatsappTemplatesIfMissingCount(db);
+        }
+        if (oldVersion < 5) {
+            addPlaceNameColumns(db);
+            createSettings(db);
         }
     }
 
@@ -117,36 +121,38 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         return getReadableDatabase().rawQuery(sql, args);
     }
 
-    public void updateCustomerEverywhere(String oldName, String oldPhone, String oldLocation,
-                                         String newName, String newPhone, String newLocation) {
+    public void updateCustomerEverywhere(String oldName, String oldPhone, String oldPlace, String oldLocation,
+                                         String newName, String newPhone, String newPlace, String newLocation) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
             ContentValues customer = new ContentValues();
             customer.put("name", newName);
             customer.put("phone", newPhone);
+            customer.put("place_name", newPlace);
             customer.put("location", newLocation);
-            db.update("customers", customer, "name=? AND IFNULL(phone,'')=? AND IFNULL(location,'')=?",
-                    new String[]{oldName, safe(oldPhone), safe(oldLocation)});
+            db.update("customers", customer, "name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?",
+                    new String[]{oldName, safe(oldPhone), safe(oldPlace), safe(oldLocation)});
 
-            updateCustomerTable(db, "extinguishers", oldName, oldPhone, oldLocation, newName, newPhone, newLocation);
-            updateCustomerTable(db, "safety_certificates", oldName, oldPhone, oldLocation, newName, newPhone, newLocation);
-            updateCustomerTable(db, "technical_reports", oldName, oldPhone, oldLocation, newName, newPhone, newLocation);
-            updateCustomerTable(db, "maintenance_contracts", oldName, oldPhone, oldLocation, newName, newPhone, newLocation);
+            updateCustomerTable(db, "extinguishers", oldName, oldPhone, oldPlace, oldLocation, newName, newPhone, newPlace, newLocation);
+            updateCustomerTable(db, "safety_certificates", oldName, oldPhone, oldPlace, oldLocation, newName, newPhone, newPlace, newLocation);
+            updateCustomerTable(db, "technical_reports", oldName, oldPhone, oldPlace, oldLocation, newName, newPhone, newPlace, newLocation);
+            updateCustomerTable(db, "maintenance_contracts", oldName, oldPhone, oldPlace, oldLocation, newName, newPhone, newPlace, newLocation);
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
         }
     }
 
-    private void updateCustomerTable(SQLiteDatabase db, String table, String oldName, String oldPhone, String oldLocation,
-                                     String newName, String newPhone, String newLocation) {
+    private void updateCustomerTable(SQLiteDatabase db, String table, String oldName, String oldPhone, String oldPlace, String oldLocation,
+                                     String newName, String newPhone, String newPlace, String newLocation) {
         ContentValues cv = new ContentValues();
         cv.put("customer_name", newName);
         cv.put("phone", newPhone);
+        cv.put("place_name", newPlace);
         cv.put("location", newLocation);
-        db.update(table, cv, "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(location,'')=?",
-                new String[]{oldName, safe(oldPhone), safe(oldLocation)});
+        db.update(table, cv, "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?",
+                new String[]{oldName, safe(oldPhone), safe(oldPlace), safe(oldLocation)});
     }
 
     private void createSettings(SQLiteDatabase db) {
@@ -155,6 +161,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         insertDefaultSetting(db, "extinguisher_percent", "25");
         insertDefaultSetting(db, "certificate_percent", "0");
         insertDefaultSetting(db, "report_percent", "0");
+        insertDefaultSetting(db, "auto_save_contacts", "0");
         insertDefaultSetting(db, "selected_whatsapp_template", "0");
         insertDefaultSetting(db, "whatsapp_templates", defaultWhatsappTemplates());
     }
@@ -178,6 +185,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         cv.put("key", "whatsapp_templates");
         cv.put("value", defaultWhatsappTemplates());
         db.insertWithOnConflict("settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    private void addPlaceNameColumns(SQLiteDatabase db) {
+        addColumnIfMissing(db, "customers", "place_name", "TEXT");
+        addColumnIfMissing(db, "extinguishers", "place_name", "TEXT");
+        addColumnIfMissing(db, "safety_certificates", "place_name", "TEXT");
+        addColumnIfMissing(db, "technical_reports", "place_name", "TEXT");
+        addColumnIfMissing(db, "maintenance_contracts", "place_name", "TEXT");
     }
 
     private String defaultWhatsappTemplates() {
