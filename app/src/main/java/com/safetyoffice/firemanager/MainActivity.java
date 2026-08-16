@@ -238,12 +238,12 @@ public class MainActivity extends Activity {
         card("ملخص الشهر",
                 "نسبتك الإجمالية: " + money(shareTotal) +
                         "\nعدد شهادات السلامة: " + certificates);
-        section("ابدأ بسرعة");
-        homeAction("تسجيل طفايات جديدة", "صوت، موقع، اسم مكان، وسعر بالريال", this::showExtinguishers);
-        homeAction("قائمة المهام", "متابعة الشغل اليومي ومواعيد التنفيذ", this::showTasks);
-        homeAction("فتح العملاء", "تعديل صفحة منفصلة ورسائل واتساب جاهزة", this::showCustomers);
-        homeAction("تقرير الشهر", "عدد الطفايات والإجماليات والنسب", this::showMonthlyReport);
-        homeAction("الإعدادات والنسخ الاحتياطي", "النسب، واتساب، جهات الاتصال، ونسخة محلية", this::showSettings);
+        section("اختصارات سريعة");
+        homeAction("تسجيل طفايات", "إضافة عميل وصور وموقع", this::showExtinguishers);
+        homeAction("العملاء", "بحث، حالة، واتساب، وتفاصيل", this::showCustomers);
+        homeAction("تنبيهات قريبة", "طفايات وشهادات وعقود", this::showAlerts);
+        homeAction("تقرير الشهر", "الإجماليات والنسب", this::showMonthlyReport);
+        homeAction("المهام", "متابعة شغل اليوم", this::showTasks);
     }
 
     private void showTasks() {
@@ -463,8 +463,7 @@ public class MainActivity extends Activity {
             });
         }
         section("فلترة حسب الحالة");
-        filterStatusButton("كل الحالات", "");
-        for (String status : customerStatuses()) filterStatusButton(status, status);
+        statusFilterBar();
 
         String sql = "SELECT customer_name, phone, place_name, location, customer_status, SUM(total_count) total_count, SUM(total_price) total_price " +
                 "FROM (" +
@@ -502,7 +501,8 @@ public class MainActivity extends Activity {
                                 "\nالحالة: " + safe(status.isEmpty() ? "جديد" : status) +
                                 "\nإجمالي الطفايات: " + displayCount(extinguisherCount) +
                                 "\nإجمالي المبلغ: " + money(totalPrice));
-                secondaryButton("تعديل بيانات العميل", () -> showCustomerDetails(oldName, oldPhone, oldPlace, oldLocation, status, extinguisherCount, totalPrice));
+                secondaryButton("فتح ملف العميل", () -> showCustomerDetails(oldName, oldPhone, oldPlace, oldLocation, status, extinguisherCount, totalPrice));
+                secondaryButton("تغيير الحالة", () -> showCustomerStatusPage(oldName, oldPhone, oldPlace, oldLocation, status));
                 secondaryButton("رسالة واتساب للعميل", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
             }
         } finally {
@@ -524,13 +524,21 @@ public class MainActivity extends Activity {
                         "\nإجمالي المبلغ: " + money(totalPrice));
         secondaryButton("رسالة واتساب جاهزة", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
         secondaryButton("مشاركة تقرير العميل واتساب", () -> shareCustomerReportWhatsApp(oldPhone, oldName, oldPlace, oldLocation, currentStatus, extinguisherCount, totalPrice));
+        secondaryButton("تعديل بيانات العميل", () -> showCustomerEditPage(oldName, oldPhone, oldPlace, oldLocation));
+        secondaryButton("تغيير حالة العميل", () -> showCustomerStatusPage(oldName, oldPhone, oldPlace, oldLocation, currentStatus));
         secondaryButton("إضافة صورة/مرفق", () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
         secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
 
-        section("حالة العميل");
-        for (String status : customerStatuses()) statusButton(status, currentStatus, oldName, oldPhone, oldPlace, oldLocation);
+        section("كل بيانات العميل");
+        listCustomerRecords(oldName, oldPhone, oldPlace, oldLocation);
+        listCustomerAttachments(oldName, oldPhone, oldPlace, oldLocation);
+    }
 
+    private void showCustomerEditPage(String oldName, String oldPhone, String oldPlace, String oldLocation) {
+        currentTab = "customer_edit";
+        clear();
         section("تعديل بيانات العميل");
+        small("عدل البيانات هنا فقط، وبعد الحفظ هترجع لصفحة العميل بدون تداخل.");
         EditText name = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
         name.setText(oldName);
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
@@ -543,14 +551,19 @@ public class MainActivity extends Activity {
             if (empty(name)) return;
             db.updateCustomerEverywhere(oldName, oldPhone, oldPlace, oldLocation, txt(name), txt(phone), txt(place), txt(location));
             saveContactIfEnabled(txt(name), txt(phone));
-            afterSave("تم حفظ بيانات العميل والرجوع للقائمة");
-            showCustomers();
+            afterSave("تم حفظ بيانات العميل");
+            openCustomerDetails(txt(name), txt(phone), txt(place), txt(location));
         });
-        secondaryButton("إغلاق بدون حفظ", this::showCustomers);
+        secondaryButton("إلغاء والرجوع لصفحة العميل", () -> openCustomerDetails(oldName, oldPhone, oldPlace, oldLocation));
+    }
 
-        section("كل بيانات العميل");
-        listCustomerRecords(oldName, oldPhone, oldPlace, oldLocation);
-        listCustomerAttachments(oldName, oldPhone, oldPlace, oldLocation);
+    private void showCustomerStatusPage(String name, String phone, String place, String location, String currentStatus) {
+        currentTab = "customer_status";
+        clear();
+        section("تغيير حالة العميل");
+        card(name, "الحالة الحالية: " + safe(currentStatus.isEmpty() ? "جديد" : currentStatus));
+        for (String status : customerStatuses()) statusButton(status, currentStatus, name, phone, place, location);
+        secondaryButton("إلغاء والرجوع لصفحة العميل", () -> openCustomerDetails(name, phone, place, location));
     }
 
     private void statusButton(String status, String currentStatus, String name, String phone, String place, String location) {
@@ -558,16 +571,48 @@ public class MainActivity extends Activity {
         secondaryButton(status + selected, () -> {
             db.updateCustomerStatusEverywhere(name, phone, place, location, status);
             afterSave("تم تحديث حالة العميل: " + status);
-            showCustomers();
+            showCustomerDetails(name, phone, place, location, status,
+                    customerExtinguisherCount(name, phone, place, location),
+                    customerTotalPrice(name, phone, place, location));
         });
     }
 
-    private void filterStatusButton(String label, String status) {
+    private void statusFilterBar() {
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        hsv.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        filterStatusButton(row, "كل الحالات", "");
+        for (String status : customerStatuses()) filterStatusButton(row, status, status);
+        hsv.addView(row);
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(2), 0, dp(8));
+        content.addView(hsv, lp);
+    }
+
+    private void filterStatusButton(LinearLayout row, String label, String status) {
         String selected = status.equals(customerStatusFilter) ? " ✓" : "";
-        secondaryButton(label + selected, () -> {
+        Button b = new Button(this);
+        b.setText(label + selected);
+        b.setTextColor(BRAND_DARK);
+        b.setTextSize(13);
+        b.setAllCaps(false);
+        b.setBackground(rounded(status.equals(customerStatusFilter) ? BRAND_LIGHT : Color.WHITE,
+                status.equals(customerStatusFilter) ? ACCENT : Color.rgb(203, 213, 225), dp(16)));
+        b.setOnClickListener(v -> {
             customerStatusFilter = status;
             showCustomers();
         });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
+        lp.setMargins(dp(4), 0, dp(4), dp(4));
+        row.addView(b, lp);
+    }
+
+    private void openCustomerDetails(String name, String phone, String place, String location) {
+        showCustomerDetails(name, phone, place, location,
+                customerStatus(name, phone, place, location),
+                customerExtinguisherCount(name, phone, place, location),
+                customerTotalPrice(name, phone, place, location));
     }
 
     private String[] customerStatuses() {
