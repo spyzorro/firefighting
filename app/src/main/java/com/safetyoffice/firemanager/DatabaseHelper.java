@@ -14,12 +14,12 @@ import java.util.List;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String DB_NAME = "fire_salary_manager.db";
-    public static final int DB_VERSION = 7;
+    public static final int DB_VERSION = 8;
 
     private static final List<String> TABLES = Arrays.asList(
             "employees", "advances", "customers", "extinguishers",
             "safety_certificates", "technical_reports", "maintenance_contracts",
-            "customer_attachments", "tasks", "settings"
+            "customer_attachments", "extinguisher_images", "tasks", "settings"
     );
 
     public DatabaseHelper(Context context) {
@@ -62,6 +62,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
                 "place_name TEXT, location TEXT, title TEXT, uri TEXT NOT NULL, created_at INTEGER NOT NULL)");
 
+        createExtinguisherImages(db);
+
         db.execSQL("CREATE TABLE tasks (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, note TEXT, " +
                 "due_date INTEGER DEFAULT 0, is_done INTEGER DEFAULT 0, created_at INTEGER NOT NULL)");
@@ -97,6 +99,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             createTasks(db);
             createSettings(db);
         }
+        if (oldVersion < 8) {
+            createExtinguisherImages(db);
+            migrateLegacyExtinguisherImages(db);
+            createSettings(db);
+        }
     }
 
     public long insert(String table, ContentValues values) {
@@ -105,6 +112,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     public int update(String table, ContentValues values, String where, String... args) {
         return getWritableDatabase().update(table, values, where, args);
+    }
+
+    public int delete(String table, String where, String... args) {
+        return getWritableDatabase().delete(table, where, args);
     }
 
     public String setting(String key, String fallback) {
@@ -261,6 +272,36 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE IF NOT EXISTS customer_attachments (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
                 "place_name TEXT, location TEXT, title TEXT, uri TEXT NOT NULL, created_at INTEGER NOT NULL)");
+    }
+
+    private void createExtinguisherImages(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS extinguisher_images (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, extinguisher_id INTEGER NOT NULL, " +
+                "uri TEXT NOT NULL, created_at INTEGER NOT NULL)");
+    }
+
+    private void migrateLegacyExtinguisherImages(SQLiteDatabase db) {
+        Cursor c = db.rawQuery("SELECT id, image_uri FROM extinguishers WHERE IFNULL(image_uri,'')<>''", null);
+        try {
+            while (c.moveToNext()) {
+                long extinguisherId = c.getLong(0);
+                String uri = safe(c.getString(1));
+                Cursor existing = db.rawQuery("SELECT id FROM extinguisher_images WHERE extinguisher_id=? AND uri=? LIMIT 1",
+                        new String[]{String.valueOf(extinguisherId), uri});
+                try {
+                    if (existing.moveToFirst()) continue;
+                } finally {
+                    existing.close();
+                }
+                ContentValues cv = new ContentValues();
+                cv.put("extinguisher_id", extinguisherId);
+                cv.put("uri", uri);
+                cv.put("created_at", System.currentTimeMillis());
+                db.insert("extinguisher_images", null, cv);
+            }
+        } finally {
+            c.close();
+        }
     }
 
     private void addExtinguisherExtraColumns(SQLiteDatabase db) {

@@ -5,8 +5,8 @@ plugins {
 
 def githubRunNumberText = System.getenv("GITHUB_RUN_NUMBER") ?: "0"
 def githubRunNumber = githubRunNumberText ==~ /\d+/ ? githubRunNumberText.toInteger() : 0
-def autoVersionCode = githubRunNumber > 0 ? 220000 + githubRunNumber : 220015
-def autoVersionName = githubRunNumber > 0 ? "2.2.${githubRunNumber}" : "2.2.15"
+def autoVersionCode = githubRunNumber > 0 ? 230000 + githubRunNumber : 230001
+def autoVersionName = githubRunNumber > 0 ? "2.3.${githubRunNumber}" : "2.3.1"
 
 android {
     namespace "com.safetyoffice.firemanager"
@@ -54,4 +54,5 @@ dependencies {
     implementation "com.google.firebase:firebase-auth"
     implementation "com.google.firebase:firebase-firestore"
     implementation "com.google.android.gms:play-services-auth:21.3.0"
+    implementation "androidx.core:core:1.13.1"
 }

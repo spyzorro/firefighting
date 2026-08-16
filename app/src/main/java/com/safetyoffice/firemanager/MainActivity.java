@@ -2,6 +2,7 @@ package com.safetyoffice.firemanager;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.ContentProviderOperation;
 import android.content.ActivityNotFoundException;
 import android.content.ContentValues;
@@ -18,6 +19,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.ContactsContract;
+import android.provider.MediaStore;
 import android.speech.RecognizerIntent;
 import android.text.InputType;
 import android.view.Gravity;
@@ -32,6 +34,8 @@ import android.widget.Toast;
 
 import com.google.firebase.auth.FirebaseUser;
 
+import androidx.core.content.FileProvider;
+
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.pdf.PdfDocument;
@@ -41,6 +45,7 @@ import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -52,6 +57,8 @@ public class MainActivity extends Activity {
     private static final int CONTACTS_REQUEST = 5045;
     private static final int ATTACHMENT_REQUEST = 5046;
     private static final int EXTINGUISHER_IMAGE_REQUEST = 5047;
+    private static final int EXTINGUISHER_CAMERA_REQUEST = 5048;
+    private static final int CAMERA_PERMISSION_REQUEST = 5049;
     private static final int BRAND = Color.rgb(15, 23, 42);
     private static final int BRAND_DARK = Color.rgb(2, 6, 23);
     private static final int BRAND_LIGHT = Color.rgb(241, 245, 249);
@@ -73,6 +80,8 @@ public class MainActivity extends Activity {
     private String pendingAttachmentPlace = "";
     private String pendingAttachmentLocation = "";
     private String pendingExtinguisherImageUri = "";
+    private Uri pendingCameraImageUri;
+    private final ArrayList<String> pendingExtinguisherImageUris = new ArrayList<>();
     private String customerSearch = "";
     private String customerStatusFilter = "";
 
@@ -94,9 +103,13 @@ public class MainActivity extends Activity {
             sync.handleSignInResult(data, this::showSync);
         } else if (requestCode == ATTACHMENT_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
             saveAttachmentUri(data.getData());
-        } else if (requestCode == EXTINGUISHER_IMAGE_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
-            pendingExtinguisherImageUri = persistReadableUri(data.getData());
-            toast("تم اختيار صورة الطفاية");
+        } else if (requestCode == EXTINGUISHER_IMAGE_REQUEST && resultCode == RESULT_OK && data != null) {
+            int added = addSelectedExtinguisherImages(data);
+            if (added == 0) toast("لم يتم اختيار صورة جديدة");
+            else toast(added > 1 ? "تم اختيار " + added + " صور للطفاية" : "تم اختيار صورة الطفاية");
+        } else if (requestCode == EXTINGUISHER_CAMERA_REQUEST && resultCode == RESULT_OK && pendingCameraImageUri != null) {
+            addPendingExtinguisherImage(pendingCameraImageUri.toString());
+            toast("تم حفظ صورة الكاميرا للطفاية");
         } else if (requestCode == VOICE_REQUEST && resultCode == RESULT_OK && data != null) {
             ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
             if (matches != null && !matches.isEmpty()) {
@@ -137,6 +150,10 @@ public class MainActivity extends Activity {
             } else {
                 toast("لازم تسمح بجهات الاتصال علشان الحفظ التلقائي يشتغل");
             }
+        } else if (requestCode == CAMERA_PERMISSION_REQUEST) {
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            if (granted) takeExtinguisherPhoto();
+            else toast("لازم تسمح للتطبيق بالكاميرا علشان التصوير يشتغل");
         }
     }
 
@@ -210,9 +227,17 @@ public class MainActivity extends Activity {
         int count = (int) singleDouble("SELECT COALESCE(SUM(count),0) FROM extinguishers");
         int customers = (int) singleDouble("SELECT COUNT(*) FROM customers");
         int maintenance = (int) singleDouble("SELECT COUNT(*) FROM maintenance_contracts");
+        int certificates = (int) singleDouble("SELECT COUNT(*) FROM safety_certificates");
+        long[] range = monthRange();
+        double shareTotal = monthlyShareTotal(range);
         hero("لوحة التحكم",
                 "الطفايات: " + count + " | العملاء: " + customers + " | العقود: " + maintenance +
-                        "\nإجمالي مبالغ الطفايات: " + money(total));
+                        "\nالشهادات: " + certificates +
+                        "\nإجمالي مبالغ الطفايات: " + money(total) +
+                        "\nإجمالي نسبتك هذا الشهر: " + money(shareTotal));
+        card("ملخص الشهر",
+                "نسبتك الإجمالية: " + money(shareTotal) +
+                        "\nعدد شهادات السلامة: " + certificates);
         section("ابدأ بسرعة");
         homeAction("تسجيل طفايات جديدة", "صوت، موقع، اسم مكان، وسعر بالريال", this::showExtinguishers);
         homeAction("قائمة المهام", "متابعة الشغل اليومي ومواعيد التنفيذ", this::showTasks);
@@ -334,11 +359,15 @@ public class MainActivity extends Activity {
         currentTab = "extinguishers";
         clear();
         pendingExtinguisherImageUri = "";
+        pendingExtinguisherImageUris.clear();
+        pendingCameraImageUri = null;
         section("تسجيل طفايات لعميل");
         EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
         EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
+        EditText customerStatus = input("حالة العميل", InputType.TYPE_CLASS_TEXT);
+        customerStatus.setText("جاري الصيانة");
         EditText type = input("نوع الطفاية", InputType.TYPE_CLASS_TEXT);
         EditText weight = input("وزن الطفاية", InputType.TYPE_CLASS_TEXT);
         EditText count = input("عدد الطفايات", InputType.TYPE_CLASS_NUMBER);
@@ -347,21 +376,23 @@ public class MainActivity extends Activity {
         deliveredAgain.setText("لا");
         EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
-        secondaryButton("رفع صورة الطفاية", () -> chooseExtinguisherImage());
-        voiceAllButton("تسجيل سريع بالصوت: قول بيانات الطفايات مرة واحدة", customer, place, location, type, weight, count, price, deliveredAgain, date);
+        secondaryButton("رفع صور الطفاية من المعرض", () -> chooseExtinguisherImage());
+        secondaryButton("تصوير الطفاية بالكاميرا", () -> takeExtinguisherPhoto());
+        voiceAllButton("تسجيل سريع بالصوت: قول بيانات الطفايات مرة واحدة", customer, place, location, customerStatus, type, weight, count, price, deliveredAgain, date);
         small("مثال: محمد 20 طفاية بودرة co2 120 ريال. رقم الموبايل اكتبه عادي، واللوكيشن اضغط موقعي.");
         button("حفظ الطفايات وجدولة التذكير", () -> {
             if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
             try {
                 long stickerDate = ReminderScheduler.parseDate(txt(date));
                 long reminder = ReminderScheduler.stickerReminder(stickerDate);
+                String status = txt(customerStatus).isEmpty() ? "جاري الصيانة" : txt(customerStatus);
 
                 ContentValues ccv = new ContentValues();
                 ccv.put("name", txt(customer));
                 ccv.put("phone", txt(phone));
                 ccv.put("place_name", txt(place));
                 ccv.put("location", txt(location));
-                ccv.put("customer_status", "جديد");
+                ccv.put("customer_status", status);
                 ccv.put("created_at", System.currentTimeMillis());
                 long customerId = db.insert("customers", ccv);
 
@@ -371,7 +402,7 @@ public class MainActivity extends Activity {
                 cv.put("phone", txt(phone));
                 cv.put("place_name", txt(place));
                 cv.put("location", txt(location));
-                cv.put("customer_status", "جديد");
+                cv.put("customer_status", status);
                 cv.put("extinguisher_type", txt(type));
                 cv.put("weight", txt(weight));
                 cv.put("count", integer(count));
@@ -381,7 +412,8 @@ public class MainActivity extends Activity {
                 cv.put("image_uri", pendingExtinguisherImageUri);
                 cv.put("delivered_again", yesNo(txt(deliveredAgain)) ? 1 : 0);
                 cv.put("created_at", System.currentTimeMillis());
-                db.insert("extinguishers", cv);
+                long extinguisherId = db.insert("extinguishers", cv);
+                saveExtinguisherImages(extinguisherId, pendingExtinguisherImageUris);
                 saveContactIfEnabled(txt(customer), txt(phone));
                 afterSave("تم حفظ الطفايات والتنبيه يوم " + ReminderScheduler.formatDate(reminder));
                 showExtinguishers();
@@ -394,6 +426,7 @@ public class MainActivity extends Activity {
         Cursor c = db.all("extinguishers");
         try {
             while (c.moveToNext()) {
+                long id = c.getLong(c.getColumnIndexOrThrow("id"));
                 String oldCustomer = c.getString(c.getColumnIndexOrThrow("customer_name"));
                 card(oldCustomer,
                         "عدد: " + c.getInt(c.getColumnIndexOrThrow("count")) +
@@ -406,7 +439,7 @@ public class MainActivity extends Activity {
                                 "\nاسم المكان: " + val(c, "place_name") +
                                 "\nلوكيشن: " + val(c, "location"));
                 String image = rawVal(c, "image_uri");
-                if (!image.isEmpty()) secondaryButton("فتح صورة الطفاية", () -> openAttachment(image));
+                listExtinguisherImages(id, image);
             }
         } finally {
             c.close();
@@ -495,7 +528,7 @@ public class MainActivity extends Activity {
         secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
 
         section("حالة العميل");
-        for (String status : customerStatuses()) statusButton(status, oldName, oldPhone, oldPlace, oldLocation);
+        for (String status : customerStatuses()) statusButton(status, currentStatus, oldName, oldPhone, oldPlace, oldLocation);
 
         section("تعديل بيانات العميل");
         EditText name = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
@@ -520,8 +553,9 @@ public class MainActivity extends Activity {
         listCustomerAttachments(oldName, oldPhone, oldPlace, oldLocation);
     }
 
-    private void statusButton(String status, String name, String phone, String place, String location) {
-        secondaryButton(status, () -> {
+    private void statusButton(String status, String currentStatus, String name, String phone, String place, String location) {
+        String selected = status.equals(currentStatus) ? " ✓" : "";
+        secondaryButton(status + selected, () -> {
             db.updateCustomerStatusEverywhere(name, phone, place, location, status);
             afterSave("تم تحديث حالة العميل: " + status);
             showCustomers();
@@ -539,14 +573,11 @@ public class MainActivity extends Activity {
     private String[] customerStatuses() {
         return new String[]{
                 "جديد",
-                "تمت الزيارة",
-                "محتاج متابعة",
-                "تم التحصيل",
-                "استلم الشغل - باقي تحصيل",
-                "تحصيل جزئي - باقي مبلغ",
-                "الطفايات عندي - لم يستلمها العميل",
-                "متفقين - لم يتم التنفيذ",
-                "تنفيذ جزئي - باقي شغل"
+                "استلام الطفايات",
+                "تسليم الطفايات",
+                "تسليم جزئي",
+                "جاري الصيانة",
+                "انتظار التحصيل"
         };
     }
 
@@ -566,7 +597,7 @@ public class MainActivity extends Activity {
                                 "\nالتذكير: " + ReminderScheduler.formatDate(e.getLong(6)) +
                                 "\nاستلم تاني: " + yesNoLabel(e.getInt(8)));
                 String image = emptyForDb(e.getString(7));
-                if (!image.isEmpty()) secondaryButton("فتح صورة الطفاية", () -> openAttachment(image));
+                listExtinguisherImages(id, image);
                 secondaryButton("تعديل بيانات الطفايات", () -> showExtinguisherEdit(id));
             }
         } finally {
@@ -638,8 +669,12 @@ public class MainActivity extends Activity {
             EditText deliveredAgain = input("استلم الطفايات تاني؟ نعم/لا", InputType.TYPE_CLASS_TEXT);
             deliveredAgain.setText(yesNoLabel(c.getInt(c.getColumnIndexOrThrow("delivered_again"))));
             pendingExtinguisherImageUri = rawVal(c, "image_uri");
-            secondaryButton(pendingExtinguisherImageUri.isEmpty() ? "رفع صورة الطفاية" : "تغيير صورة الطفاية", () -> chooseExtinguisherImage());
-            if (!pendingExtinguisherImageUri.isEmpty()) secondaryButton("فتح صورة الطفاية الحالية", () -> openAttachment(pendingExtinguisherImageUri));
+            pendingExtinguisherImageUris.clear();
+            pendingExtinguisherImageUris.addAll(extinguisherImages(id, pendingExtinguisherImageUri));
+            pendingCameraImageUri = null;
+            secondaryButton("إضافة صور من المعرض", () -> chooseExtinguisherImage());
+            secondaryButton("تصوير صورة جديدة بالكاميرا", () -> takeExtinguisherPhoto());
+            listExtinguisherImages(id, pendingExtinguisherImageUri);
             EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
             date.setText(ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("sticker_date"))));
             button("حفظ وإغلاق تعديل الطفايات", () -> {
@@ -657,9 +692,12 @@ public class MainActivity extends Activity {
                     cv.put("total_price", dbl(price));
                     cv.put("sticker_date", stickerDate);
                     cv.put("reminder_at", ReminderScheduler.stickerReminder(stickerDate));
+                    pendingExtinguisherImageUri = pendingExtinguisherImageUris.isEmpty() ? "" : pendingExtinguisherImageUris.get(0);
                     cv.put("image_uri", pendingExtinguisherImageUri);
                     cv.put("delivered_again", yesNo(txt(deliveredAgain)) ? 1 : 0);
                     db.update("extinguishers", cv, "id=?", String.valueOf(id));
+                    db.delete("extinguisher_images", "extinguisher_id=?", String.valueOf(id));
+                    saveExtinguisherImages(id, pendingExtinguisherImageUris);
                     saveContactIfEnabled(txt(customer), txt(phone));
                     afterSave("تم حفظ تعديل الطفايات");
                     showCustomers();
@@ -819,6 +857,26 @@ public class MainActivity extends Activity {
                 card(label, "الإجمالي: " + money(total) +
                         "\nنسبتك " + cleanNumber(pct) + "%: " + money(total * pct / 100.0));
             }
+        } finally {
+            c.close();
+        }
+    }
+
+    private double monthlyShareTotal(long[] range) {
+        double extinguisherTotal = monthlyTableTotal("extinguishers", range);
+        double certificateTotal = monthlyTableTotal("safety_certificates", range);
+        double reportTotal = monthlyTableTotal("technical_reports", range);
+        return extinguisherTotal * db.settingDouble("extinguisher_percent", 25) / 100.0 +
+                certificateTotal * db.settingDouble("certificate_percent", 0) / 100.0 +
+                reportTotal * db.settingDouble("report_percent", 0) / 100.0;
+    }
+
+    private double monthlyTableTotal(String table, long[] range) {
+        Cursor c = db.raw("SELECT COALESCE(SUM(total_price),0) FROM " + table +
+                        " WHERE created_at BETWEEN ? AND ?",
+                String.valueOf(range[0]), String.valueOf(range[1]));
+        try {
+            return c.moveToFirst() ? c.getDouble(0) : 0;
         } finally {
             c.close();
         }
@@ -1169,12 +1227,68 @@ public class MainActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("image/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         try {
             startActivityForResult(intent, EXTINGUISHER_IMAGE_REQUEST);
         } catch (Exception e) {
             toast("تعذر فتح اختيار الصورة");
         }
+    }
+
+    private void takeExtinguisherPhoto() {
+        if (!hasCameraPermission()) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
+            return;
+        }
+        try {
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            File photo = createCameraImageFile();
+            pendingCameraImageUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", photo);
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, pendingCameraImageUri);
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent, EXTINGUISHER_CAMERA_REQUEST);
+        } catch (Exception e) {
+            toast("تعذر فتح الكاميرا");
+        }
+    }
+
+    private boolean hasCameraPermission() {
+        return Build.VERSION.SDK_INT < 23 ||
+                checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private File createCameraImageFile() throws Exception {
+        File base = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        if (base == null) base = getFilesDir();
+        File dir = new File(base, "ExtinguisherPhotos");
+        if (!dir.exists()) dir.mkdirs();
+        return new File(dir, "extinguisher-" + System.currentTimeMillis() + ".jpg");
+    }
+
+    private int addSelectedExtinguisherImages(Intent data) {
+        int added = 0;
+        ClipData clipData = data.getClipData();
+        if (clipData != null) {
+            for (int i = 0; i < clipData.getItemCount(); i++) {
+                Uri uri = clipData.getItemAt(i).getUri();
+                String saved = persistReadableUri(uri);
+                if (addPendingExtinguisherImage(saved.isEmpty() ? uri.toString() : saved)) added++;
+            }
+        } else if (data.getData() != null) {
+            Uri uri = data.getData();
+            String saved = persistReadableUri(uri);
+            if (addPendingExtinguisherImage(saved.isEmpty() ? uri.toString() : saved)) added++;
+        }
+        return added;
+    }
+
+    private boolean addPendingExtinguisherImage(String uri) {
+        String safeUri = emptyForDb(uri);
+        if (safeUri.isEmpty() || pendingExtinguisherImageUris.contains(safeUri)) return false;
+        pendingExtinguisherImageUris.add(safeUri);
+        if (pendingExtinguisherImageUri.isEmpty()) pendingExtinguisherImageUri = safeUri;
+        return true;
     }
 
     private void saveAttachmentUri(Uri uri) {
@@ -1196,6 +1310,45 @@ public class MainActivity extends Activity {
         String status = customerStatus(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace, pendingAttachmentLocation);
         showCustomerDetails(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace,
                 pendingAttachmentLocation, status, count, total);
+    }
+
+    private void saveExtinguisherImages(long extinguisherId, ArrayList<String> imageUris) {
+        HashSet<String> unique = new HashSet<>();
+        for (String uri : imageUris) {
+            String safeUri = emptyForDb(uri);
+            if (safeUri.isEmpty() || unique.contains(safeUri)) continue;
+            unique.add(safeUri);
+            ContentValues cv = new ContentValues();
+            cv.put("extinguisher_id", extinguisherId);
+            cv.put("uri", safeUri);
+            cv.put("created_at", System.currentTimeMillis());
+            db.insert("extinguisher_images", cv);
+        }
+    }
+
+    private ArrayList<String> extinguisherImages(long extinguisherId, String legacyImage) {
+        ArrayList<String> images = new ArrayList<>();
+        String legacy = emptyForDb(legacyImage);
+        if (!legacy.isEmpty()) images.add(legacy);
+        Cursor c = db.raw("SELECT uri FROM extinguisher_images WHERE extinguisher_id=? ORDER BY created_at DESC",
+                String.valueOf(extinguisherId));
+        try {
+            while (c.moveToNext()) {
+                String uri = emptyForDb(c.getString(0));
+                if (!uri.isEmpty() && !images.contains(uri)) images.add(uri);
+            }
+        } finally {
+            c.close();
+        }
+        return images;
+    }
+
+    private void listExtinguisherImages(long extinguisherId, String legacyImage) {
+        ArrayList<String> images = extinguisherImages(extinguisherId, legacyImage);
+        for (int i = 0; i < images.size(); i++) {
+            String uri = images.get(i);
+            secondaryButton("فتح صورة الطفاية " + (i + 1), () -> openAttachment(uri));
+        }
     }
 
     private String persistReadableUri(Uri uri) {
@@ -1551,29 +1704,30 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(8), dp(4), dp(8), dp(4));
-        row.setBackground(rounded(Color.WHITE, Color.rgb(226, 232, 240), dp(10)));
+        row.setPadding(dp(12), dp(8), dp(12), dp(8));
+        row.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(12)));
 
         EditText et = new EditText(this);
         et.setHint(hint);
         et.setTextColor(TEXT);
         et.setHintTextColor(Color.rgb(100, 116, 139));
+        et.setTextSize(16);
         et.setInputType(inputType);
         et.setGravity(Gravity.RIGHT);
         et.setSingleLine(true);
-        et.setMinHeight(dp(48));
+        et.setMinHeight(dp(58));
         et.setBackgroundColor(Color.TRANSPARENT);
         row.addView(et, new LinearLayout.LayoutParams(0, -2, 1));
 
         if (hint.contains("لوكيشن")) {
             Button current = new Button(this);
             current.setText("موقعي");
-            current.setTextSize(12);
+            current.setTextSize(13);
             current.setTextColor(BRAND);
             current.setAllCaps(false);
             current.setBackground(rounded(BRAND_LIGHT, Color.rgb(254, 202, 202), dp(14)));
             current.setOnClickListener(v -> fillCurrentLocation(et));
-            LinearLayout.LayoutParams locLp = new LinearLayout.LayoutParams(dp(78), dp(42));
+            LinearLayout.LayoutParams locLp = new LinearLayout.LayoutParams(dp(86), dp(48));
             locLp.setMargins(dp(6), 0, 0, 0);
             row.addView(current, locLp);
         }
@@ -1582,18 +1736,18 @@ public class MainActivity extends Activity {
         if (inputClass != InputType.TYPE_CLASS_PHONE) {
             Button mic = new Button(this);
             mic.setText("صوت");
-            mic.setTextSize(12);
+            mic.setTextSize(13);
             mic.setTextColor(BRAND);
             mic.setAllCaps(false);
             mic.setBackground(rounded(BRAND_LIGHT, Color.rgb(254, 202, 202), dp(14)));
             mic.setOnClickListener(v -> startVoiceInput(et));
-            LinearLayout.LayoutParams micLp = new LinearLayout.LayoutParams(dp(72), dp(42));
+            LinearLayout.LayoutParams micLp = new LinearLayout.LayoutParams(dp(78), dp(48));
             micLp.setMargins(dp(6), 0, 0, 0);
             row.addView(mic, micLp);
         }
 
         LinearLayout.LayoutParams lp = matchWrap();
-        lp.setMargins(0, dp(5), 0, dp(6));
+        lp.setMargins(0, dp(6), 0, dp(9));
         content.addView(row, lp);
         return et;
     }
