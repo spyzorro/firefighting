@@ -18,9 +18,13 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.ContactsContract;
 import android.provider.MediaStore;
+import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -73,6 +77,14 @@ public class MainActivity extends Activity {
     private LinearLayout content;
     private EditText voiceTarget;
     private EditText[] voiceGroup;
+    private SpeechRecognizer speechRecognizer;
+    private Button manualVoiceButton;
+    private String manualVoiceIdleText = "";
+    private String manualVoiceCommittedText = "";
+    private String manualVoiceCurrentText = "";
+    private boolean manualVoiceActive = false;
+    private boolean manualVoiceStopRequested = false;
+    private boolean manualVoiceApplied = false;
     private EditText locationTarget;
     private String currentTab = "home";
     private String pendingAttachmentName = "";
@@ -94,6 +106,12 @@ public class MainActivity extends Activity {
         ReminderScheduler.scheduleAll(this, db);
         buildShell();
         showHome();
+    }
+
+    @Override
+    protected void onDestroy() {
+        destroySpeechRecognizer();
+        super.onDestroy();
     }
 
     @Override
@@ -129,8 +147,7 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == RECORD_AUDIO_REQUEST && grantResults.length > 0 &&
                 grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            if (voiceGroup != null && voiceGroup.length > 0) startVoiceGroupInput(voiceGroup);
-            else if (voiceTarget != null) startVoiceInput(voiceTarget);
+            toast("تم السماح بالصوت، اضغط زر الصوت مرة أخرى وابدأ التسجيل");
         } else if (requestCode == LOCATION_REQUEST && locationTarget != null) {
             boolean granted = false;
             for (int result : grantResults) {
@@ -182,17 +199,12 @@ public class MainActivity extends Activity {
         hsv.setHorizontalScrollBarEnabled(false);
         LinearLayout tabs = new LinearLayout(this);
         tabs.setOrientation(LinearLayout.HORIZONTAL);
-        addTab(tabs, "الرئيسية", R.drawable.ic_nav_home, v -> showHome());
-        addTab(tabs, "المهام", R.drawable.ic_nav_tasks, v -> showTasks());
-        addTab(tabs, "المرتبات", R.drawable.ic_nav_salary, v -> showSalaries());
-        addTab(tabs, "الطفايات", R.drawable.ic_nav_extinguisher, v -> showExtinguishers());
+        addTab(tabs, "تسجيل", R.drawable.ic_nav_extinguisher, v -> showExtinguishers());
         addTab(tabs, "العملاء", R.drawable.ic_nav_customers, v -> showCustomers());
         addTab(tabs, "تنبيهات", R.drawable.ic_nav_alerts, v -> showAlerts());
-        addTab(tabs, "الشهادات", R.drawable.ic_nav_certificate, v -> showCertificates());
-        addTab(tabs, "الصيانة", R.drawable.ic_nav_maintenance, v -> showMaintenance());
         addTab(tabs, "التقرير", R.drawable.ic_nav_report, v -> showMonthlyReport());
-        addTab(tabs, "الإعدادات", R.drawable.ic_nav_settings, v -> showSettings());
-        addTab(tabs, "Google", R.drawable.ic_nav_sync, v -> showSync());
+        addTab(tabs, "المهام", R.drawable.ic_nav_tasks, v -> showTasks());
+        addTab(tabs, "المزيد", R.drawable.ic_nav_settings, v -> showMore());
         hsv.addView(tabs);
         root.addView(hsv, matchWrap());
 
@@ -215,7 +227,7 @@ public class MainActivity extends Activity {
         b.setCompoundDrawablePadding(dp(3));
         b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(12)));
         b.setOnClickListener(listener);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(86), dp(62));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(82), dp(60));
         lp.setMargins(dp(4), dp(10), dp(4), dp(6));
         tabs.addView(b, lp);
     }
@@ -238,12 +250,23 @@ public class MainActivity extends Activity {
         card("ملخص الشهر",
                 "نسبتك الإجمالية: " + money(shareTotal) +
                         "\nعدد شهادات السلامة: " + certificates);
-        section("اختصارات سريعة");
-        homeAction("تسجيل طفايات", "إضافة عميل وصور وموقع", this::showExtinguishers);
-        homeAction("العملاء", "بحث، حالة، واتساب، وتفاصيل", this::showCustomers);
-        homeAction("تنبيهات قريبة", "طفايات وشهادات وعقود", this::showAlerts);
-        homeAction("تقرير الشهر", "الإجماليات والنسب", this::showMonthlyReport);
-        homeAction("المهام", "متابعة شغل اليوم", this::showTasks);
+        button("تسجيل عميل وطفايات بسرعة", this::showExtinguishers);
+        section("اختصارات");
+        homeAction("العملاء", "بحث وتغيير حالة وواتساب", this::showCustomers);
+        homeAction("تنبيهات", "المواعيد القريبة والمتأخرة", this::showAlerts);
+        homeAction("التقرير", "إجماليات الشهر والنسب", this::showMonthlyReport);
+        homeAction("المزيد", "مرتبات، شهادات، صيانة، إعدادات", this::showMore);
+    }
+
+    private void showMore() {
+        currentTab = "more";
+        clear();
+        section("المزيد");
+        homeAction("المرتبات والسلف", "تسجيل المرتبات والسلف الشهرية", this::showSalaries);
+        homeAction("الشهادات والتقارير", "شهادات السلامة والتقارير الفنية", this::showCertificates);
+        homeAction("عقود الصيانة", "زيارات كل 3 شهور وتنبيهات", this::showMaintenance);
+        homeAction("الإعدادات", "النسب، واتساب، جهات الاتصال، ونسخة احتياطية", this::showSettings);
+        homeAction("مزامنة Google", "حفظ واسترجاع البيانات", this::showSync);
     }
 
     private void showTasks() {
@@ -361,26 +384,27 @@ public class MainActivity extends Activity {
         pendingExtinguisherImageUri = "";
         pendingExtinguisherImageUris.clear();
         pendingCameraImageUri = null;
-        section("تسجيل طفايات لعميل");
+        hero("تسجيل سريع",
+                "اكتب المهم فقط، أو قول البيانات مرة واحدة. الموقع والصور بزر واحد.");
         EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
-        EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
-        EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
-        EditText customerStatus = input("حالة العميل", InputType.TYPE_CLASS_TEXT);
-        customerStatus.setText("جاري الصيانة");
-        EditText type = input("نوع الطفاية", InputType.TYPE_CLASS_TEXT);
-        EditText weight = input("وزن الطفاية", InputType.TYPE_CLASS_TEXT);
         EditText count = input("عدد الطفايات", InputType.TYPE_CLASS_NUMBER);
         EditText price = input("إجمالي مبلغ الطفايات", numberType());
-        EditText deliveredAgain = input("استلم الطفايات تاني؟ نعم/لا", InputType.TYPE_CLASS_TEXT);
+        EditText type = input("نوع الطفاية", InputType.TYPE_CLASS_TEXT);
+        EditText weight = input("وزن الطفاية", InputType.TYPE_CLASS_TEXT);
+        EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
+        EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
+        EditText customerStatus = hiddenInput("حالة العميل");
+        customerStatus.setText("جاري الصيانة");
+        statusInputBar(customerStatus);
+        EditText deliveredAgain = hiddenInput("استلم الطفايات تاني؟ نعم/لا");
         deliveredAgain.setText("لا");
         EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
-        secondaryButton("رفع صور الطفاية من المعرض", () -> chooseExtinguisherImage());
-        secondaryButton("تصوير الطفاية بالكاميرا", () -> takeExtinguisherPhoto());
-        voiceAllButton("تسجيل سريع بالصوت: قول بيانات الطفايات مرة واحدة", customer, place, location, customerStatus, type, weight, count, price, deliveredAgain, date);
-        small("مثال: محمد 20 طفاية بودرة co2 120 ريال. رقم الموبايل اكتبه عادي، واللوكيشن اضغط موقعي.");
-        button("حفظ الطفايات وجدولة التذكير", () -> {
+        quickImageBar();
+        voiceAllButton("قول كل البيانات مرة واحدة", customer, phone, count, price, type, weight, place, location, date);
+        small("مثال: محمد 20 طفاية بودرة CO2 120 ريال. بعد كده اضغط موقعي لو عاوز اللوكيشن الحالي.");
+        button("حفظ العميل والطفايات", () -> {
             if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
             try {
                 long stickerDate = ReminderScheduler.parseDate(txt(date));
@@ -421,7 +445,12 @@ public class MainActivity extends Activity {
                 toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
             }
         });
+        secondaryButton("عرض آخر عمليات الطفايات", this::showRecentExtinguishers);
+    }
 
+    private void showRecentExtinguishers() {
+        currentTab = "recent_extinguishers";
+        clear();
         section("آخر عمليات الطفايات");
         Cursor c = db.all("extinguishers");
         try {
@@ -444,6 +473,7 @@ public class MainActivity extends Activity {
         } finally {
             c.close();
         }
+        secondaryButton("رجوع للتسجيل السريع", this::showExtinguishers);
     }
 
     private void showCustomers() {
@@ -686,6 +716,7 @@ public class MainActivity extends Activity {
     }
 
     private void showExtinguisherEdit(long id) {
+        currentTab = "extinguisher_edit";
         clear();
         section("تعديل بيانات الطفايات");
         Cursor c = db.raw("SELECT * FROM extinguishers WHERE id=?", String.valueOf(id));
@@ -745,7 +776,7 @@ public class MainActivity extends Activity {
                     saveExtinguisherImages(id, pendingExtinguisherImageUris);
                     saveContactIfEnabled(txt(customer), txt(phone));
                     afterSave("تم حفظ تعديل الطفايات");
-                    showCustomers();
+                    openCustomerDetails(txt(customer), txt(phone), txt(place), txt(location));
                 } catch (Exception ex) {
                     toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
                 }
@@ -1115,6 +1146,7 @@ public class MainActivity extends Activity {
     }
 
     private void clear() {
+        if (manualVoiceActive) cancelManualVoice();
         content.removeAllViews();
     }
 
@@ -1148,8 +1180,9 @@ public class MainActivity extends Activity {
         b.setTextSize(15);
         b.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         b.setAllCaps(false);
-        b.setPadding(dp(14), 0, dp(14), 0);
-        b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(12)));
+        b.setPadding(dp(16), dp(6), dp(16), dp(6));
+        b.setMinHeight(dp(64));
+        b.setBackground(rounded(Color.WHITE, Color.rgb(226, 232, 240), dp(10)));
         b.setOnClickListener(v -> action.run());
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(6), 0, dp(6));
@@ -1171,8 +1204,8 @@ public class MainActivity extends Activity {
     private void card(String title, String body) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(14), dp(12), dp(14), dp(12));
-        box.setBackground(rounded(CARD, Color.rgb(226, 232, 240), dp(12)));
+        box.setPadding(dp(16), dp(14), dp(16), dp(14));
+        box.setBackground(rounded(CARD, Color.rgb(226, 232, 240), dp(10)));
         TextView t = new TextView(this);
         t.setText(title);
         t.setTextColor(TEXT);
@@ -1200,7 +1233,7 @@ public class MainActivity extends Activity {
             box.addView(open, openLp);
         }
         LinearLayout.LayoutParams lp = matchWrap();
-        lp.setMargins(0, dp(5), 0, dp(9));
+        lp.setMargins(0, dp(5), 0, dp(10));
         content.addView(box, lp);
     }
 
@@ -1785,7 +1818,7 @@ public class MainActivity extends Activity {
             mic.setTextColor(BRAND);
             mic.setAllCaps(false);
             mic.setBackground(rounded(BRAND_LIGHT, Color.rgb(254, 202, 202), dp(14)));
-            mic.setOnClickListener(v -> startVoiceInput(et));
+            mic.setOnClickListener(v -> toggleManualVoice(mic, et));
             LinearLayout.LayoutParams micLp = new LinearLayout.LayoutParams(dp(78), dp(48));
             micLp.setMargins(dp(6), 0, 0, 0);
             row.addView(mic, micLp);
@@ -1813,16 +1846,230 @@ public class MainActivity extends Activity {
 
     private void voiceAllButton(String text, EditText... fields) {
         Button b = new Button(this);
+        b.setText(text + "\nاضغط مرة ثانية عند الانتهاء");
+        b.setTextColor(BRAND_DARK);
+        b.setTextSize(13);
+        b.setAllCaps(false);
+        b.setMinHeight(dp(58));
+        b.setBackground(rounded(Color.WHITE, Color.rgb(254, 202, 202), dp(10)));
+        b.setOnClickListener(v -> toggleManualVoice(b, null, fields));
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(3), 0, dp(8));
+        content.addView(b, lp);
+    }
+
+    private EditText hiddenInput(String hint) {
+        EditText et = new EditText(this);
+        et.setHint(hint);
+        et.setInputType(InputType.TYPE_CLASS_TEXT);
+        return et;
+    }
+
+    private void statusInputBar(EditText statusTarget) {
+        small("حالة العميل: " + txt(statusTarget));
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        hsv.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        for (String status : customerStatuses()) {
+            Button b = new Button(this);
+            b.setText(status);
+            b.setTextColor(BRAND_DARK);
+            b.setTextSize(13);
+            b.setAllCaps(false);
+            b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(16)));
+            b.setOnClickListener(v -> {
+                statusTarget.setText(status);
+                toast("الحالة: " + status);
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
+            lp.setMargins(dp(4), 0, dp(4), dp(6));
+            row.addView(b, lp);
+        }
+        hsv.addView(row);
+        content.addView(hsv, matchWrap());
+    }
+
+    private void quickImageBar() {
+        small("صور الطفايات اختيارية، ممكن تختار أكتر من صورة أو تصور بالكاميرا.");
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+        row.addView(compactActionButton("المعرض", this::chooseExtinguisherImage), new LinearLayout.LayoutParams(0, dp(48), 1));
+        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(dp(8), 1);
+        TextView spacer = new TextView(this);
+        row.addView(spacer, gap);
+        row.addView(compactActionButton("الكاميرا", this::takeExtinguisherPhoto), new LinearLayout.LayoutParams(0, dp(48), 1));
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(4), 0, dp(8));
+        content.addView(row, lp);
+    }
+
+    private Button compactActionButton(String text, Runnable action) {
+        Button b = new Button(this);
         b.setText(text);
         b.setTextColor(BRAND_DARK);
         b.setTextSize(14);
         b.setAllCaps(false);
-        b.setMinHeight(dp(46));
-        b.setBackground(rounded(Color.WHITE, Color.rgb(254, 202, 202), dp(10)));
-        b.setOnClickListener(v -> startVoiceGroupInput(fields));
-        LinearLayout.LayoutParams lp = matchWrap();
-        lp.setMargins(0, dp(3), 0, dp(8));
-        content.addView(b, lp);
+        b.setBackground(rounded(Color.WHITE, Color.rgb(248, 113, 113), dp(14)));
+        b.setOnClickListener(v -> action.run());
+        return b;
+    }
+
+    private void toggleManualVoice(Button button, EditText target, EditText... group) {
+        if (manualVoiceActive && manualVoiceButton == button) {
+            finishManualVoice();
+            return;
+        }
+        if (manualVoiceActive) finishManualVoice();
+        if (Build.VERSION.SDK_INT >= 23 &&
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            voiceTarget = target;
+            voiceGroup = group;
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, RECORD_AUDIO_REQUEST);
+            return;
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            toast("خاصية الإدخال الصوتي غير متاحة على هذا الجهاز");
+            return;
+        }
+
+        voiceTarget = target;
+        voiceGroup = group;
+        manualVoiceButton = button;
+        manualVoiceIdleText = button.getText().toString();
+        manualVoiceCommittedText = "";
+        manualVoiceCurrentText = "";
+        manualVoiceActive = true;
+        manualVoiceStopRequested = false;
+        manualVoiceApplied = false;
+        button.setText("إيقاف وتوزيع");
+        button.setBackground(rounded(ACCENT, BRAND_DARK, dp(14)));
+        button.setTextColor(Color.WHITE);
+        beginManualListening();
+        toast("اتكلم براحتك، ولما تخلص اضغط إيقاف وتوزيع");
+    }
+
+    private void beginManualListening() {
+        destroySpeechRecognizer();
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+        speechRecognizer.setRecognitionListener(new RecognitionListener() {
+            @Override public void onReadyForSpeech(Bundle params) {}
+            @Override public void onBeginningOfSpeech() {}
+            @Override public void onRmsChanged(float rmsdB) {}
+            @Override public void onBufferReceived(byte[] buffer) {}
+            @Override public void onEndOfSpeech() {}
+            @Override public void onError(int error) {
+                if (manualVoiceActive && !manualVoiceStopRequested) restartManualListening();
+                else applyManualVoiceResult();
+            }
+            @Override public void onResults(Bundle results) {
+                captureFinalVoiceResult(results);
+                if (manualVoiceStopRequested) applyManualVoiceResult();
+                else restartManualListening();
+            }
+            @Override public void onPartialResults(Bundle partialResults) {
+                capturePartialVoiceResult(partialResults);
+            }
+            @Override public void onEvent(int eventType, Bundle params) {}
+        });
+        speechRecognizer.startListening(manualVoiceIntent());
+    }
+
+    private Intent manualVoiceIntent() {
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ar-EG");
+        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 300000);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 300000);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 300000);
+        return intent;
+    }
+
+    private void restartManualListening() {
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (manualVoiceActive && !manualVoiceStopRequested) beginManualListening();
+        }, 350);
+    }
+
+    private void capturePartialVoiceResult(Bundle bundle) {
+        if (bundle == null) return;
+        ArrayList<String> matches = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+        if (matches != null && !matches.isEmpty()) manualVoiceCurrentText = matches.get(0);
+    }
+
+    private void captureFinalVoiceResult(Bundle bundle) {
+        if (bundle == null) return;
+        ArrayList<String> matches = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+        if (matches == null || matches.isEmpty()) return;
+        String chunk = matches.get(0).trim();
+        if (chunk.isEmpty()) return;
+        if (manualVoiceCommittedText.isEmpty()) {
+            manualVoiceCommittedText = chunk;
+        } else if (!manualVoiceCommittedText.endsWith(chunk)) {
+            manualVoiceCommittedText = (manualVoiceCommittedText + " " + chunk).trim();
+        }
+        manualVoiceCurrentText = "";
+    }
+
+    private void finishManualVoice() {
+        manualVoiceStopRequested = true;
+        try {
+            if (speechRecognizer != null) speechRecognizer.stopListening();
+        } catch (Exception ignored) {
+        }
+        new Handler(Looper.getMainLooper()).postDelayed(this::applyManualVoiceResult, 700);
+    }
+
+    private void applyManualVoiceResult() {
+        if (manualVoiceApplied) return;
+        manualVoiceApplied = true;
+        String spoken = emptyForDb((manualVoiceCommittedText + " " + manualVoiceCurrentText).trim());
+        resetManualVoiceButton();
+        destroySpeechRecognizer();
+        manualVoiceActive = false;
+        manualVoiceStopRequested = false;
+        if (spoken.isEmpty()) {
+            toast("لم يتم التقاط كلام واضح");
+            return;
+        }
+        if (voiceGroup != null && voiceGroup.length > 0) {
+            fillVoiceGroup(spoken, voiceGroup);
+        } else if (voiceTarget != null) {
+            voiceTarget.setText(cleanVoiceText(spoken, voiceTarget.getInputType()));
+            voiceTarget.setSelection(voiceTarget.getText().length());
+            toast("تم إدخال الصوت");
+        }
+    }
+
+    private void resetManualVoiceButton() {
+        if (manualVoiceButton == null) return;
+        manualVoiceButton.setText(manualVoiceIdleText);
+        manualVoiceButton.setTextColor(BRAND_DARK);
+        if ("صوت".equals(manualVoiceIdleText)) {
+            manualVoiceButton.setBackground(rounded(BRAND_LIGHT, Color.rgb(254, 202, 202), dp(14)));
+        } else {
+            manualVoiceButton.setBackground(rounded(Color.WHITE, Color.rgb(254, 202, 202), dp(10)));
+        }
+        manualVoiceButton = null;
+        manualVoiceIdleText = "";
+    }
+
+    private void destroySpeechRecognizer() {
+        try {
+            if (speechRecognizer != null) speechRecognizer.destroy();
+        } catch (Exception ignored) {
+        }
+        speechRecognizer = null;
+    }
+
+    private void cancelManualVoice() {
+        manualVoiceApplied = true;
+        manualVoiceActive = false;
+        manualVoiceStopRequested = true;
+        resetManualVoiceButton();
+        destroySpeechRecognizer();
     }
 
     private void fillCurrentLocation(EditText target) {
