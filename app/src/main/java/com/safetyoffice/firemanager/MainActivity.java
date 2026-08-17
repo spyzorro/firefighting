@@ -46,6 +46,8 @@ import android.graphics.pdf.PdfDocument;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
@@ -402,7 +404,14 @@ public class MainActivity extends Activity {
         EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         date.setText(today());
         quickImageBar();
-        voiceAllButton("قول كل البيانات مرة واحدة", customer, phone, count, price, type, weight, place, location, date);
+        EditText voiceDraft = input("النص الصوتي للمراجعة قبل التوزيع", InputType.TYPE_CLASS_TEXT);
+        voiceDraft.setSingleLine(false);
+        voiceDraft.setMinLines(3);
+        voiceToFieldButton("سجل الكلام هنا", voiceDraft);
+        secondaryButton("وزع النص على الخانات", () -> {
+            if (empty(voiceDraft)) return;
+            fillVoiceGroup(txt(voiceDraft), new EditText[]{customer, phone, count, price, type, weight, place, location, date});
+        });
         small("مثال: محمد 20 طفاية بودرة CO2 120 ريال. بعد كده اضغط موقعي لو عاوز اللوكيشن الحالي.");
         button("حفظ العميل والطفايات", () -> {
             if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
@@ -598,13 +607,22 @@ public class MainActivity extends Activity {
 
     private void statusButton(String status, String currentStatus, String name, String phone, String place, String location) {
         String selected = status.equals(currentStatus) ? " ✓" : "";
-        secondaryButton(status + selected, () -> {
+        Button b = new Button(this);
+        b.setText(status + selected);
+        b.setTextSize(14);
+        b.setAllCaps(false);
+        b.setMinHeight(dp(48));
+        styleStatusChoice(b, status.equals(currentStatus));
+        b.setOnClickListener(v -> {
             db.updateCustomerStatusEverywhere(name, phone, place, location, status);
             afterSave("تم تحديث حالة العميل: " + status);
             showCustomerDetails(name, phone, place, location, status,
                     customerExtinguisherCount(name, phone, place, location),
                     customerTotalPrice(name, phone, place, location));
         });
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(3), 0, dp(8));
+        content.addView(b, lp);
     }
 
     private void statusFilterBar() {
@@ -890,6 +908,7 @@ public class MainActivity extends Activity {
         currentTab = "report";
         clear();
         section("تقرير الشهر الحالي");
+        button("تصدير Excel الشهر", this::exportMonthlyExcel);
         button("تصدير تقرير الشهر PDF", this::exportMonthlyPdf);
         long[] range = monthRange();
         Cursor c = db.raw("SELECT COALESCE(SUM(count),0), COALESCE(SUM(total_price),0) FROM extinguishers " +
@@ -1479,6 +1498,133 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void exportMonthlyExcel() {
+        try {
+            File file = createMonthlyExcel();
+            toast("تم حفظ Excel: " + file.getAbsolutePath());
+        } catch (Exception e) {
+            toast("تعذر تصدير ملف Excel");
+        }
+    }
+
+    private File createMonthlyExcel() throws Exception {
+        long[] range = monthRange();
+        StringBuilder html = new StringBuilder();
+        html.append("\ufeff<html><head><meta charset=\"UTF-8\"></head>");
+        html.append("<body dir=\"rtl\" style=\"font-family:Arial;\">");
+        html.append("<h2>تقرير الشهر الحالي</h2>");
+        html.append("<p>تاريخ التصدير: ").append(htmlEscape(ReminderScheduler.formatDate(System.currentTimeMillis()))).append("</p>");
+        appendExcelSummary(html, range);
+        appendExcelExtinguishers(html, range);
+        appendExcelSimpleTable(html, "شهادات السلامة",
+                new String[]{"العميل", "الرقم", "اسم المكان", "الحالة", "المبلغ", "تاريخ الشهادة", "التذكير"},
+                "SELECT customer_name, phone, place_name, customer_status, total_price, certificate_date, reminder_at FROM safety_certificates WHERE created_at BETWEEN ? AND ? ORDER BY created_at DESC",
+                range, new int[]{5, 6}, new int[]{4});
+        appendExcelSimpleTable(html, "التقارير الفنية",
+                new String[]{"العميل", "الرقم", "اسم المكان", "الحالة", "المبلغ", "تاريخ التقرير", "التذكير"},
+                "SELECT customer_name, phone, place_name, customer_status, total_price, report_date, reminder_at FROM technical_reports WHERE created_at BETWEEN ? AND ? ORDER BY created_at DESC",
+                range, new int[]{5, 6}, new int[]{4});
+        appendExcelSimpleTable(html, "عقود الصيانة",
+                new String[]{"العميل", "الرقم", "اسم المكان", "الحالة", "تاريخ البداية", "الزيارة القادمة", "التذكير"},
+                "SELECT customer_name, phone, place_name, customer_status, start_date, next_visit_at, reminder_at FROM maintenance_contracts WHERE created_at BETWEEN ? AND ? ORDER BY created_at DESC",
+                range, new int[]{4, 5, 6}, new int[]{});
+        appendExcelSimpleTable(html, "السلف",
+                new String[]{"الشخص", "المبلغ", "ملاحظة"},
+                "SELECT employee_name, amount, note FROM advances WHERE created_at BETWEEN ? AND ? ORDER BY created_at DESC",
+                range, new int[]{}, new int[]{1});
+        html.append("</body></html>");
+
+        File dir = reportDir();
+        String month = String.format(Locale.US, "%tY-%tm", new Date(), new Date());
+        File file = new File(dir, "monthly-report-" + month + ".xls");
+        OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8);
+        try {
+            writer.write(html.toString());
+        } finally {
+            writer.close();
+        }
+        return file;
+    }
+
+    private void appendExcelSummary(StringBuilder html, long[] range) {
+        double extinguisherTotal = monthlyTableTotal("extinguishers", range);
+        double certificateTotal = monthlyTableTotal("safety_certificates", range);
+        double reportTotal = monthlyTableTotal("technical_reports", range);
+        double extinguisherPct = db.settingDouble("extinguisher_percent", 25);
+        double certificatePct = db.settingDouble("certificate_percent", 0);
+        double reportPct = db.settingDouble("report_percent", 0);
+        double extinguisherShare = extinguisherTotal * extinguisherPct / 100.0;
+        double certificateShare = certificateTotal * certificatePct / 100.0;
+        double reportShare = reportTotal * reportPct / 100.0;
+        html.append("<h3>الملخص</h3><table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">");
+        html.append("<tr><th>البند</th><th>الإجمالي</th><th>النسبة</th><th>نسبتك</th></tr>");
+        appendExcelRow(html, "الطفايات", money(extinguisherTotal), cleanNumber(extinguisherPct) + "%", money(extinguisherShare));
+        appendExcelRow(html, "شهادات السلامة", money(certificateTotal), cleanNumber(certificatePct) + "%", money(certificateShare));
+        appendExcelRow(html, "التقارير الفنية", money(reportTotal), cleanNumber(reportPct) + "%", money(reportShare));
+        appendExcelRow(html, "إجمالي نسبتك", "", "", money(extinguisherShare + certificateShare + reportShare));
+        html.append("</table>");
+    }
+
+    private void appendExcelExtinguishers(StringBuilder html, long[] range) {
+        appendExcelSimpleTable(html, "الطفايات",
+                new String[]{"العميل", "الرقم", "اسم المكان", "الحالة", "النوع", "الوزن", "العدد", "المبلغ", "تاريخ الاستيكر", "التذكير", "استلم تاني"},
+                "SELECT customer_name, phone, place_name, customer_status, extinguisher_type, weight, count, total_price, sticker_date, reminder_at, delivered_again FROM extinguishers WHERE created_at BETWEEN ? AND ? ORDER BY created_at DESC",
+                range, new int[]{8, 9}, new int[]{7});
+    }
+
+    private void appendExcelSimpleTable(StringBuilder html, String title, String[] headers, String sql,
+                                        long[] range, int[] dateColumns, int[] moneyColumns) {
+        html.append("<h3>").append(htmlEscape(title)).append("</h3>");
+        html.append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\"><tr>");
+        for (String header : headers) html.append("<th>").append(htmlEscape(header)).append("</th>");
+        html.append("</tr>");
+        Cursor c = db.raw(sql, String.valueOf(range[0]), String.valueOf(range[1]));
+        try {
+            while (c.moveToNext()) {
+                html.append("<tr>");
+                for (int i = 0; i < headers.length; i++) {
+                    String value;
+                    if (containsIndex(dateColumns, i)) value = ReminderScheduler.formatDate(c.getLong(i));
+                    else if (containsIndex(moneyColumns, i)) value = money(c.getDouble(i));
+                    else if (title.equals("الطفايات") && i == 10) value = yesNoLabel(c.getInt(i));
+                    else value = safe(c.getString(i));
+                    html.append("<td>").append(htmlEscape(value)).append("</td>");
+                }
+                html.append("</tr>");
+            }
+        } finally {
+            c.close();
+        }
+        html.append("</table>");
+    }
+
+    private void appendExcelRow(StringBuilder html, String... values) {
+        html.append("<tr>");
+        for (String value : values) html.append("<td>").append(htmlEscape(value)).append("</td>");
+        html.append("</tr>");
+    }
+
+    private boolean containsIndex(int[] values, int target) {
+        for (int value : values) if (value == target) return true;
+        return false;
+    }
+
+    private String htmlEscape(String value) {
+        return safe(value)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
+    }
+
+    private File reportDir() {
+        File base = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
+        if (base == null) base = getFilesDir();
+        File dir = new File(base, "FireManagerReports");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
     private File createMonthlyPdf() throws Exception {
         long[] range = monthRange();
         PdfDocument pdf = new PdfDocument();
@@ -1518,10 +1664,7 @@ public class MainActivity extends Activity {
         }
 
         pdf.finishPage(page);
-        File base = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
-        if (base == null) base = getFilesDir();
-        File dir = new File(base, "FireManagerReports");
-        if (!dir.exists()) dir.mkdirs();
+        File dir = reportDir();
         String month = String.format(Locale.US, "%tY-%tm", new Date(), new Date());
         File file = new File(dir, "monthly-report-" + month + ".pdf");
         FileOutputStream output = new FileOutputStream(file);
@@ -1858,6 +2001,20 @@ public class MainActivity extends Activity {
         content.addView(b, lp);
     }
 
+    private void voiceToFieldButton(String text, EditText target) {
+        Button b = new Button(this);
+        b.setText(text + "\nاضغط مرة ثانية عند الانتهاء");
+        b.setTextColor(BRAND_DARK);
+        b.setTextSize(13);
+        b.setAllCaps(false);
+        b.setMinHeight(dp(58));
+        b.setBackground(rounded(Color.WHITE, Color.rgb(254, 202, 202), dp(10)));
+        b.setOnClickListener(v -> toggleManualVoice(b, target));
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(3), 0, dp(8));
+        content.addView(b, lp);
+    }
+
     private EditText hiddenInput(String hint) {
         EditText et = new EditText(this);
         et.setHint(hint);
@@ -1866,7 +2023,12 @@ public class MainActivity extends Activity {
     }
 
     private void statusInputBar(EditText statusTarget) {
-        small("حالة العميل: " + txt(statusTarget));
+        TextView label = new TextView(this);
+        label.setText("حالة العميل: " + txt(statusTarget));
+        label.setTextColor(Color.rgb(71, 85, 105));
+        label.setGravity(Gravity.RIGHT);
+        label.setTextSize(14);
+        content.addView(label, matchWrap());
         HorizontalScrollView hsv = new HorizontalScrollView(this);
         hsv.setHorizontalScrollBarEnabled(false);
         LinearLayout row = new LinearLayout(this);
@@ -1874,12 +2036,19 @@ public class MainActivity extends Activity {
         for (String status : customerStatuses()) {
             Button b = new Button(this);
             b.setText(status);
-            b.setTextColor(BRAND_DARK);
             b.setTextSize(13);
             b.setAllCaps(false);
-            b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(16)));
+            styleStatusChoice(b, status.equals(txt(statusTarget)));
             b.setOnClickListener(v -> {
                 statusTarget.setText(status);
+                label.setText("حالة العميل: " + status);
+                for (int i = 0; i < row.getChildCount(); i++) {
+                    View child = row.getChildAt(i);
+                    if (child instanceof Button) {
+                        Button item = (Button) child;
+                        styleStatusChoice(item, status.equals(item.getText().toString()));
+                    }
+                }
                 toast("الحالة: " + status);
             });
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
@@ -1888,6 +2057,12 @@ public class MainActivity extends Activity {
         }
         hsv.addView(row);
         content.addView(hsv, matchWrap());
+    }
+
+    private void styleStatusChoice(Button button, boolean selected) {
+        button.setTextColor(selected ? Color.WHITE : BRAND_DARK);
+        button.setBackground(rounded(selected ? ACCENT : Color.WHITE,
+                selected ? BRAND_DARK : Color.rgb(203, 213, 225), dp(16)));
     }
 
     private void quickImageBar() {
@@ -2269,9 +2444,18 @@ public class MainActivity extends Activity {
         EditText weight = fieldByHint(fields, "وزن الطفاية");
         EditText count = fieldByHint(fields, "عدد الطفايات");
         EditText price = fieldByHint(fields, "إجمالي مبلغ الطفايات");
+        EditText phone = fieldByHint(fields, "رقم العميل");
         if (customer == null || type == null || count == null || price == null) return false;
 
         String normalized = normalizeDigits(text);
+        if (phone != null) {
+            Matcher phoneMatcher = Pattern.compile("(?:\\+?966|00966|05|5)[0-9\\s\\-]{7,13}").matcher(normalized);
+            if (phoneMatcher.find()) {
+                String phoneText = phoneMatcher.group().replaceAll("[^0-9+]", "");
+                phone.setText(phoneText);
+                normalized = (normalized.substring(0, phoneMatcher.start()) + " " + normalized.substring(phoneMatcher.end())).trim();
+            }
+        }
         NumberMention countMention = findNumberBeforeUnit(normalized, new String[]{"طفايه", "طفاية", "طفايات"});
         NumberMention priceMention = findNumberBeforeUnit(normalized, new String[]{"ريال", "ريالات", "جنيه", "جنيهات"});
         if (priceMention == null) {
