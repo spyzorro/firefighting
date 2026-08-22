@@ -3,9 +3,14 @@ package com.safetyoffice.firemanager;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ContentProviderOperation;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -41,6 +46,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.ListenerRegistration;
 
 import androidx.core.content.FileProvider;
 
@@ -62,6 +68,7 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -74,6 +81,8 @@ public class MainActivity extends Activity {
     private static final int EXTINGUISHER_IMAGE_REQUEST = 5047;
     private static final int EXTINGUISHER_CAMERA_REQUEST = 5048;
     private static final int CAMERA_PERMISSION_REQUEST = 5049;
+    private static final int ATTACHMENT_CAMERA_REQUEST = 5050;
+    private static final String TEAM_CHANNEL_ID = "team_assignments";
     private static final int BRAND = Color.rgb(15, 23, 42);
     private static final int BRAND_DARK = Color.rgb(2, 6, 23);
     private static final int BRAND_LIGHT = Color.rgb(241, 245, 249);
@@ -89,6 +98,8 @@ public class MainActivity extends Activity {
     private boolean appUpdateChecked;
     private boolean appVersionPublished;
     private boolean assignmentsAutoPulled;
+    private ListenerRegistration assignmentListener;
+    private String activeAssignmentListenerTeamCode = "";
     private LinearLayout content;
     private TextView syncBadge;
     private EditText voiceTarget;
@@ -107,6 +118,7 @@ public class MainActivity extends Activity {
     private String pendingAttachmentPhone = "";
     private String pendingAttachmentPlace = "";
     private String pendingAttachmentLocation = "";
+    private boolean cameraForAttachment;
     private String pendingExtinguisherImageUri = "";
     private Uri pendingCameraImageUri;
     private final ArrayList<String> pendingExtinguisherImageUris = new ArrayList<>();
@@ -126,6 +138,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (assignmentListener != null) assignmentListener.remove();
         destroySpeechRecognizer();
         super.onDestroy();
     }
@@ -135,8 +148,15 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == SyncManager.RC_SIGN_IN) {
             sync.handleSignInResult(data, this::showSync);
-        } else if (requestCode == ATTACHMENT_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
-            saveAttachmentUri(data.getData());
+        } else if (requestCode == ATTACHMENT_REQUEST && resultCode == RESULT_OK && data != null) {
+            int added = saveAttachmentIntent(data);
+            if (added == 0) toast("لم يتم اختيار صورة");
+            else toast(added > 1 ? "تم حفظ " + added + " صور" : "تم حفظ الصورة");
+            refreshPendingAttachmentCustomer();
+        } else if (requestCode == ATTACHMENT_CAMERA_REQUEST && resultCode == RESULT_OK && pendingCameraImageUri != null) {
+            saveAttachmentUri(pendingCameraImageUri);
+            toast("تم حفظ صورة الكاميرا");
+            refreshPendingAttachmentCustomer();
         } else if (requestCode == EXTINGUISHER_IMAGE_REQUEST && resultCode == RESULT_OK && data != null) {
             int added = addSelectedExtinguisherImages(data);
             if (added == 0) toast("لم يتم اختيار صورة جديدة");
@@ -185,7 +205,10 @@ public class MainActivity extends Activity {
             }
         } else if (requestCode == CAMERA_PERMISSION_REQUEST) {
             boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-            if (granted) takeExtinguisherPhoto();
+            if (granted) {
+                if (cameraForAttachment) takeAttachmentPhoto();
+                else takeExtinguisherPhoto();
+            }
             else toast("لازم تسمح للتطبيق بالكاميرا علشان التصوير يشتغل");
         }
     }
@@ -286,6 +309,7 @@ public class MainActivity extends Activity {
                 "نسبتك الإجمالية: " + money(shareTotal) +
                         "\nعدد شهادات السلامة: " + certificates);
         button("تسجيل عميل وطفايات بسرعة", this::showExtinguishers);
+        button("استلام من الفنيين", this::showTeamInbox);
         section("اختصارات");
         homeAction("العملاء", "بحث وتغيير حالة وواتساب", this::showCustomers);
         homeAction("تنبيهات", "المواعيد القريبة والمتأخرة", this::showAlerts);
@@ -305,6 +329,7 @@ public class MainActivity extends Activity {
         homeAction("المرتبات والسلف", "تسجيل المرتبات والسلف الشهرية", this::showSalaries);
         homeAction("الشهادات والتقارير", "شهادات السلامة والتقارير الفنية", this::showCertificates);
         homeAction("عقود الصيانة", "زيارات كل 3 شهور وتنبيهات", this::showMaintenance);
+        homeAction("استلام من الفنيين", "مراجعة التحديثات قبل اعتمادها", this::showTeamInbox);
         homeAction("الإعدادات", "النسب، واتساب، جهات الاتصال، ونسخة احتياطية", this::showSettings);
         homeAction("مزامنة Google", "حفظ واسترجاع البيانات", this::showSync);
     }
@@ -328,6 +353,7 @@ public class MainActivity extends Activity {
             sync.checkRequiredUpdate(appVersionCode(), this::showRequiredUpdate);
         }
         autoPullAssignmentsIfNeeded();
+        startAssignmentListenerIfNeeded();
     }
 
     private void autoPullAssignmentsIfNeeded() {
@@ -336,6 +362,43 @@ public class MainActivity extends Activity {
         if (teamCode.isEmpty()) return;
         assignmentsAutoPulled = true;
         sync.restoreAssignments(teamCode, null);
+    }
+
+    private void startAssignmentListenerIfNeeded() {
+        if (!isTechnicianUser()) {
+            stopAssignmentListener();
+            return;
+        }
+        String teamCode = db.setting("team_code", "").trim().replace("/", "_");
+        if (teamCode.isEmpty()) {
+            stopAssignmentListener();
+            return;
+        }
+        if (assignmentListener != null && teamCode.equals(activeAssignmentListenerTeamCode)) return;
+        stopAssignmentListener();
+        activeAssignmentListenerTeamCode = teamCode;
+        assignmentListener = sync.listenOpenAssignments(teamCode, new SyncManager.AssignmentListener() {
+            @Override
+            public void onAssignmentsImported(int count, String latestCustomer) {
+                showTeamAssignmentNotification(count, latestCustomer);
+                if ("customers".equals(currentTab) || "home".equals(currentTab) || "sync".equals(currentTab)) {
+                    showCustomers();
+                }
+            }
+
+            @Override
+            public void onError(String message) {
+                toast("تعذر تحديث التكليفات: " + safe(message));
+            }
+        });
+    }
+
+    private void stopAssignmentListener() {
+        if (assignmentListener != null) {
+            assignmentListener.remove();
+            assignmentListener = null;
+        }
+        activeAssignmentListenerTeamCode = "";
     }
 
     private int appVersionCode() {
@@ -1503,13 +1566,190 @@ public class MainActivity extends Activity {
                 sync.restoreAssignments(txt(teamCode), this::showCustomers);
             });
             if (isSupervisorUser()) {
-                button("استلام تحديثات الفريق المنتهية", () -> {
+                button("استلام من الفنيين", () -> {
                     db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
-                    sync.restoreCompletedAssignments(txt(teamCode), this::showCustomers);
+                    showTeamInbox();
                 });
             }
         } else {
             small("بعد تسجيل الدخول بحساب Google ستظهر أزرار المشرف أو أزرار الفني حسب الإيميل.");
+        }
+    }
+
+    private void showTeamInbox() {
+        currentTab = "team_inbox";
+        clear();
+        section("استلام من الفنيين");
+        if (!isSupervisorUser()) {
+            small("هذه الصفحة للمشرف فقط.");
+            secondaryButton("رجوع", this::showHome);
+            return;
+        }
+        FirebaseUser user = sync.user();
+        if (user == null) {
+            small("سجل بحساب Google الأول علشان تستلم تحديثات الفنيين.");
+            button("تسجيل بحساب Google", () -> sync.signIn(this));
+            return;
+        }
+        EditText teamCode = input("كود الفريق", InputType.TYPE_CLASS_TEXT);
+        teamCode.setText(db.setting("team_code", ""));
+        button("تحديث القائمة", () -> {
+            db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
+            loadTeamInbox(txt(teamCode));
+        });
+        loadTeamInbox(db.setting("team_code", ""));
+    }
+
+    private void loadTeamInbox(String teamCode) {
+        String code = emptyForDb(teamCode).trim().replace("/", "_");
+        if (code.isEmpty()) {
+            small("اكتب كود الفريق ثم اضغط تحديث القائمة.");
+            return;
+        }
+        sync.fetchCompletedAssignments(code, new SyncManager.CompletedAssignmentsListener() {
+            @Override
+            public void onLoaded(List<SyncManager.CompletedAssignment> assignments) {
+                showTeamInboxResults(code, assignments);
+            }
+
+            @Override
+            public void onError(String message) {
+                toast("فشل تحميل تحديثات الفنيين: " + safe(message));
+            }
+        });
+    }
+
+    private void showTeamInboxResults(String teamCode, List<SyncManager.CompletedAssignment> assignments) {
+        currentTab = "team_inbox";
+        clear();
+        section("استلام من الفنيين");
+        card("كود الفريق", teamCode);
+        if (assignments == null || assignments.isEmpty()) {
+            card("لا توجد تكليفات", "مافيش تكليفات مسجلة على كود الفريق حاليا.");
+            secondaryButton("رجوع", this::showHome);
+            return;
+        }
+        for (SyncManager.CompletedAssignment item : assignments) {
+            card(emptyForDb(item.customerName).isEmpty() ? "تحديث فني" : item.customerName,
+                    assignmentReviewText(item));
+            ArrayList<String> images = snapshotImageUris(item.completedSnapshot);
+            if (!images.isEmpty()) {
+                small("صور الفني:");
+                for (String uri : images) imagePreview(uri);
+            }
+            String status = emptyForDb(item.status);
+            if ("completed".equals(status)) {
+                actionButton("اعتماد وإضافته عندي", Color.rgb(22, 163, 74), () ->
+                        sync.approveCompletedAssignment(item, () -> loadTeamInbox(teamCode)));
+                secondaryButton("رفض التحديث", () -> confirmRejectCompletedAssignment(item, teamCode));
+            } else if ("open".equals(status)) {
+                small("التكليف لسه عند الفني ولم يتم تسليمه للمشرف.");
+            } else if ("supervisor_received".equals(status)) {
+                small("تم اعتماد هذا التحديث سابقا.");
+            } else if ("supervisor_rejected".equals(status)) {
+                small("تم رفض هذا التحديث سابقا.");
+            }
+        }
+        secondaryButton("رجوع", this::showHome);
+    }
+
+    private void confirmRejectCompletedAssignment(SyncManager.CompletedAssignment item, String teamCode) {
+        new AlertDialog.Builder(this)
+                .setTitle("رفض تحديث الفني")
+                .setMessage("هل تريد رفض التحديث بدون إضافته عندك؟")
+                .setPositiveButton("رفض", (dialog, which) ->
+                        sync.rejectCompletedAssignment(item, () -> loadTeamInbox(teamCode)))
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
+    private String assignmentReviewText(SyncManager.CompletedAssignment item) {
+        StringBuilder out = new StringBuilder();
+        out.append("الفني: ").append(safe(item.completedByEmail)).append("\n");
+        out.append("حالة التكليف: ").append(assignmentStatusLabel(item.status)).append("\n");
+        if (item.completedAt > 0) out.append("وقت الإرسال: ").append(ReminderScheduler.formatDate(item.completedAt)).append("\n");
+        out.append("رقم: ").append(safe(item.phone)).append("\n");
+        out.append("اسم المكان: ").append(safe(item.place)).append("\n");
+        out.append("اللوكيشن: ").append(safe(item.location)).append("\n\n");
+        if ("open".equals(emptyForDb(item.status))) {
+            out.append("البيانات المرسلة للفني:\n");
+            try {
+                JSONObject sent = new JSONObject(emptyForDb(item.originalSnapshot).isEmpty() ? "{}" : item.originalSnapshot);
+                out.append("عدد الطفايات: ").append(blankDash(snapshotExtinguisherValue(sent, "count"))).append("\n");
+                out.append("المبلغ: ").append(blankDash(snapshotExtinguisherValue(sent, "total_price"))).append("\n");
+                out.append("الوزن: ").append(blankDash(snapshotExtinguisherValue(sent, "weight"))).append("\n");
+                out.append("نوع الطفاية: ").append(blankDash(snapshotExtinguisherValue(sent, "type"))).append("\n");
+            } catch (Exception ignored) {
+            }
+            return out.toString();
+        }
+        out.append("مراجعة التعديل:\n");
+        try {
+            JSONObject before = new JSONObject(emptyForDb(item.originalSnapshot).isEmpty() ? "{}" : item.originalSnapshot);
+            JSONObject after = new JSONObject(emptyForDb(item.completedSnapshot).isEmpty() ? "{}" : item.completedSnapshot);
+            int changes = 0;
+            changes += appendSnapshotDiff(out, before, after, "count", "عدد الطفايات");
+            changes += appendSnapshotDiff(out, before, after, "total_price", "المبلغ");
+            changes += appendSnapshotDiff(out, before, after, "weight", "الوزن");
+            changes += appendSnapshotDiff(out, before, after, "type", "نوع الطفاية");
+            if (changes == 0) out.append("لا يوجد تعديل في العدد أو المبلغ أو الوزن أو النوع.\n");
+            out.append("صور الفني: ").append(snapshotImageUris(item.completedSnapshot).size()).append("\n");
+        } catch (Exception e) {
+            out.append("تعذر قراءة تفاصيل التعديل.");
+        }
+        return out.toString();
+    }
+
+    private String assignmentStatusLabel(String status) {
+        String value = emptyForDb(status);
+        if ("open".equals(value)) return "مرسل للفني";
+        if ("completed".equals(value)) return "بانتظار مراجعة المشرف";
+        if ("supervisor_received".equals(value)) return "تم الاعتماد";
+        if ("supervisor_rejected".equals(value)) return "تم الرفض";
+        return value.isEmpty() ? "-" : value;
+    }
+
+    private String blankDash(String value) {
+        return emptyForDb(value).isEmpty() ? "-" : value;
+    }
+
+    private int appendSnapshotDiff(StringBuilder out, JSONObject before, JSONObject after, String key, String label) {
+        String oldValue = snapshotExtinguisherValue(before, key);
+        String newValue = snapshotExtinguisherValue(after, key);
+        if (oldValue.equals(newValue)) return 0;
+        out.append(label).append(": ").append(oldValue.isEmpty() ? "-" : oldValue)
+                .append(" -> ").append(newValue.isEmpty() ? "-" : newValue).append("\n");
+        return 1;
+    }
+
+    private String snapshotExtinguisherValue(JSONObject root, String key) {
+        try {
+            JSONArray rows = root.optJSONArray("extinguishers");
+            if (rows == null || rows.length() == 0) return "";
+            Object value = rows.getJSONObject(0).opt(key);
+            return value == null || value == JSONObject.NULL ? "" : String.valueOf(value);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private ArrayList<String> snapshotImageUris(String rawSnapshot) {
+        ArrayList<String> images = new ArrayList<>();
+        try {
+            JSONObject root = new JSONObject(emptyForDb(rawSnapshot).isEmpty() ? "{}" : rawSnapshot);
+            addSnapshotImages(images, root.optJSONArray("customer_attachments"), "uri");
+            addSnapshotImages(images, root.optJSONArray("extinguisher_images"), "uri");
+            addSnapshotImages(images, root.optJSONArray("extinguishers"), "image_uri");
+        } catch (Exception ignored) {
+        }
+        return images;
+    }
+
+    private void addSnapshotImages(ArrayList<String> images, JSONArray rows, String key) {
+        if (rows == null) return;
+        for (int i = 0; i < rows.length(); i++) {
+            String uri = rows.optJSONObject(i) == null ? "" : rows.optJSONObject(i).optString(key, "");
+            if (!uri.isEmpty() && !images.contains(uri) && looksLikeImage(uri)) images.add(uri);
         }
     }
 
@@ -1541,6 +1781,38 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 10);
         }
+    }
+
+    private void showTeamAssignmentNotification(int count, String latestCustomer) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null) return;
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel channel = new NotificationChannel(TEAM_CHANNEL_ID, "تكليفات الفريق", NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription("إشعارات عند وصول تكليف جديد للفني");
+            manager.createNotificationChannel(channel);
+        }
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 5051, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
+        String title = count > 1 ? "وصلت تكليفات جديدة" : "وصل تكليف جديد";
+        String text = emptyForDb(latestCustomer).isEmpty()
+                ? "افتح العملاء المحولين لمراجعة الشغل."
+                : "عميل: " + latestCustomer;
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, TEAM_CHANNEL_ID)
+                : new Notification.Builder(this);
+        builder.setSmallIcon(R.drawable.ic_nav_tasks)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .setDefaults(Notification.DEFAULT_ALL)
+                .setPriority(Notification.PRIORITY_HIGH);
+        manager.notify(6100 + Math.min(count, 99), builder.build());
     }
 
     private void clear() {
@@ -1701,15 +1973,56 @@ public class MainActivity extends Activity {
         pendingAttachmentPhone = phone;
         pendingAttachmentPlace = place;
         pendingAttachmentLocation = location;
+        new AlertDialog.Builder(this)
+                .setTitle("إضافة صورة")
+                .setItems(new String[]{"تصوير بالكاميرا", "اختيار من المعرض", "اختيار ملف PDF"}, (dialog, which) -> {
+                    if (which == 0) takeAttachmentPhoto();
+                    else if (which == 1) chooseAttachmentFromGallery();
+                    else chooseAttachmentFile();
+                })
+                .show();
+    }
+
+    private void chooseAttachmentFromGallery() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "application/pdf"});
+        intent.setType("image/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         try {
             startActivityForResult(intent, ATTACHMENT_REQUEST);
         } catch (Exception e) {
-            toast("تعذر فتح اختيار المرفق");
+            toast("تعذر فتح المعرض");
+        }
+    }
+
+    private void chooseAttachmentFile() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/pdf");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, ATTACHMENT_REQUEST);
+        } catch (Exception e) {
+            toast("تعذر فتح اختيار الملف");
+        }
+    }
+
+    private void takeAttachmentPhoto() {
+        cameraForAttachment = true;
+        if (!hasCameraPermission()) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
+            return;
+        }
+        try {
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            File photo = createCameraImageFile("CustomerPhotos", "customer-");
+            pendingCameraImageUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", photo);
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, pendingCameraImageUri);
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent, ATTACHMENT_CAMERA_REQUEST);
+        } catch (Exception e) {
+            toast("تعذر فتح الكاميرا");
         }
     }
 
@@ -1727,13 +2040,14 @@ public class MainActivity extends Activity {
     }
 
     private void takeExtinguisherPhoto() {
+        cameraForAttachment = false;
         if (!hasCameraPermission()) {
             requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
             return;
         }
         try {
             Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-            File photo = createCameraImageFile();
+            File photo = createCameraImageFile("ExtinguisherPhotos", "extinguisher-");
             pendingCameraImageUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", photo);
             intent.putExtra(MediaStore.EXTRA_OUTPUT, pendingCameraImageUri);
             intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -1748,12 +2062,12 @@ public class MainActivity extends Activity {
                 checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
     }
 
-    private File createCameraImageFile() throws Exception {
+    private File createCameraImageFile(String folder, String prefix) throws Exception {
         File base = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
         if (base == null) base = getFilesDir();
-        File dir = new File(base, "ExtinguisherPhotos");
+        File dir = new File(base, folder);
         if (!dir.exists()) dir.mkdirs();
-        return new File(dir, "extinguisher-" + System.currentTimeMillis() + ".jpg");
+        return new File(dir, prefix + System.currentTimeMillis() + ".jpg");
     }
 
     private int addSelectedExtinguisherImages(Intent data) {
@@ -1781,6 +2095,21 @@ public class MainActivity extends Activity {
         return true;
     }
 
+    private int saveAttachmentIntent(Intent data) {
+        int added = 0;
+        ClipData clipData = data.getClipData();
+        if (clipData != null) {
+            for (int i = 0; i < clipData.getItemCount(); i++) {
+                saveAttachmentUri(clipData.getItemAt(i).getUri());
+                added++;
+            }
+        } else if (data.getData() != null) {
+            saveAttachmentUri(data.getData());
+            added++;
+        }
+        return added;
+    }
+
     private void saveAttachmentUri(Uri uri) {
         String savedUri = persistReadableUri(uri);
         if (savedUri.isEmpty()) savedUri = uri.toString();
@@ -1795,6 +2124,9 @@ public class MainActivity extends Activity {
         cv.put("created_at", System.currentTimeMillis());
         db.insert("customer_attachments", cv);
         afterSave("تم حفظ المرفق مع العميل");
+    }
+
+    private void refreshPendingAttachmentCustomer() {
         int count = customerExtinguisherCount(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace, pendingAttachmentLocation);
         double total = customerTotalPrice(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace, pendingAttachmentLocation);
         String status = customerStatus(pendingAttachmentName, pendingAttachmentPhone, pendingAttachmentPlace, pendingAttachmentLocation);
@@ -1914,20 +2246,35 @@ public class MainActivity extends Activity {
 
     private void listCustomerAttachments(String name, String phone, String place, String location) {
         section("صور ومرفقات العميل");
-        Cursor c = db.raw("SELECT title, uri, created_at FROM customer_attachments " +
+        Cursor c = db.raw("SELECT id, title, uri, created_at FROM customer_attachments " +
                 "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC",
                 customerArgs(name, phone, place, location));
         try {
             while (c.moveToNext()) {
-                String title = safe(c.getString(0));
-                String uri = c.getString(1);
-                card(title, "تمت الإضافة: " + ReminderScheduler.formatDate(c.getLong(2)));
+                long id = c.getLong(0);
+                String title = safe(c.getString(1));
+                String uri = c.getString(2);
+                card(title, "تمت الإضافة: " + ReminderScheduler.formatDate(c.getLong(3)));
                 if (looksLikeImage(uri)) imagePreview(uri);
                 secondaryButton("فتح المرفق", () -> openAttachment(uri));
+                secondaryButton("حذف الصورة", () -> confirmDeleteCustomerAttachment(id, name, phone, place, location));
             }
         } finally {
             c.close();
         }
+    }
+
+    private void confirmDeleteCustomerAttachment(long id, String name, String phone, String place, String location) {
+        new AlertDialog.Builder(this)
+                .setTitle("حذف الصورة")
+                .setMessage("تحب تحذف الصورة دي من العميل؟")
+                .setPositiveButton("حذف", (dialog, which) -> {
+                    db.deleteCustomerAttachment(id);
+                    afterSave("تم حذف الصورة");
+                    openCustomerDetails(name, phone, place, location);
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
     }
 
     private void openAttachment(String uriText) {

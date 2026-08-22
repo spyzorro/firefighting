@@ -169,6 +169,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         getWritableDatabase().insertWithOnConflict("team_assignments", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
+    public boolean hasTeamAssignment(String assignmentId) {
+        Cursor c = getReadableDatabase().query("team_assignments", new String[]{"assignment_id"},
+                "assignment_id=?", new String[]{safe(assignmentId)}, null, null, null, "1");
+        try {
+            return c.moveToFirst();
+        } finally {
+            c.close();
+        }
+    }
+
     public String teamAssignmentValue(String name, String phone, String place, String location, String column) {
         Cursor c = getReadableDatabase().query("team_assignments", new String[]{column},
                 "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? AND status='open'",
@@ -184,6 +194,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         ContentValues cv = new ContentValues();
         cv.put("status", "completed");
         getWritableDatabase().update("team_assignments", cv, "assignment_id=?", new String[]{assignmentId});
+    }
+
+    public void deleteCustomerAttachment(long id) {
+        getWritableDatabase().delete("customer_attachments", "id=?", new String[]{String.valueOf(id)});
     }
 
     public void deleteCustomerEverywhere(String name, String phone, String place, String location) {

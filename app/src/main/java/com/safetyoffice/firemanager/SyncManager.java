@@ -23,6 +23,8 @@ import com.google.firebase.auth.GoogleAuthProvider;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.ListenerRegistration;
+import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.firestore.SetOptions;
 
 import org.json.JSONObject;
@@ -123,6 +125,16 @@ public class SyncManager {
 
     public interface UpdateListener {
         void onUpdateRequired(String versionName, String apkUrl);
+    }
+
+    public interface AssignmentListener {
+        void onAssignmentsImported(int count, String latestCustomer);
+        void onError(String message);
+    }
+
+    public interface CompletedAssignmentsListener {
+        void onLoaded(List<CompletedAssignment> assignments);
+        void onError(String message);
     }
 
     public void upload(Runnable onDone) {
@@ -330,6 +342,47 @@ public class SyncManager {
                 });
     }
 
+    public ListenerRegistration listenOpenAssignments(String teamCode, AssignmentListener listener) {
+        FirebaseUser u = user();
+        String code = cleanTeamCode(teamCode);
+        if (u == null || code.length() == 0) return null;
+        return firestore.collection("fire_manager_assignments").document(code).collection("items")
+                .whereEqualTo("status", "open")
+                .addSnapshotListener((query, error) -> {
+                    if (error != null) {
+                        if (listener != null) listener.onError(error.getMessage());
+                        return;
+                    }
+                    importOpenAssignments(query, code, listener);
+                });
+    }
+
+    private void importOpenAssignments(QuerySnapshot query, String code, AssignmentListener listener) {
+        if (query == null) return;
+        int imported = 0;
+        String latestCustomer = "";
+        try {
+            for (DocumentSnapshot doc : query.getDocuments()) {
+                if (db.hasTeamAssignment(doc.getId())) continue;
+                String snapshot = doc.getString("snapshot");
+                if (snapshot == null) continue;
+                JSONObject root = new JSONObject(snapshot);
+                db.importTeamJson(root);
+                db.saveTeamAssignment(doc.getId(), code,
+                        doc.getString("customer_name"),
+                        doc.getString("phone"),
+                        doc.getString("place_name"),
+                        doc.getString("location"));
+                imported++;
+                latestCustomer = doc.getString("customer_name");
+            }
+            if (imported > 0) ReminderScheduler.scheduleAll(context, db);
+            if (listener != null && imported > 0) listener.onAssignmentsImported(imported, latestCustomer == null ? "" : latestCustomer);
+        } catch (Exception e) {
+            if (listener != null) listener.onError(e.getMessage());
+        }
+    }
+
     public void completeAssignment(String teamCode, String assignmentId, JSONObject completedSnapshot, Runnable onDone) {
         FirebaseUser u = user();
         String code = cleanTeamCode(teamCode);
@@ -396,6 +449,85 @@ public class SyncManager {
                 })
                 .addOnFailureListener(e -> {
                     Toast.makeText(context, "فشل استلام تحديثات الفريق: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    if (onDone != null) onDone.run();
+                });
+    }
+
+    public void fetchCompletedAssignments(String teamCode, CompletedAssignmentsListener listener) {
+        FirebaseUser u = user();
+        String code = cleanTeamCode(teamCode);
+        if (u == null || code.length() == 0) {
+            if (listener != null) listener.onError("بيانات الفريق غير مكتملة");
+            return;
+        }
+        firestore.collection("fire_manager_assignments").document(code).collection("items").get()
+                .addOnSuccessListener(query -> {
+                    List<CompletedAssignment> result = new ArrayList<>();
+                    for (DocumentSnapshot doc : query.getDocuments()) {
+                        result.add(new CompletedAssignment(
+                                code,
+                                doc.getId(),
+                                doc.getString("customer_name"),
+                                doc.getString("phone"),
+                                doc.getString("place_name"),
+                                doc.getString("location"),
+                                doc.getString("status"),
+                                doc.getString("snapshot"),
+                                doc.getString("completed_snapshot"),
+                                doc.getString("completed_by_email"),
+                                doc.getLong("completed_at") == null ? 0 : doc.getLong("completed_at")
+                        ));
+                    }
+                    if (listener != null) listener.onLoaded(result);
+                })
+                .addOnFailureListener(e -> {
+                    if (listener != null) listener.onError(e.getMessage());
+                });
+    }
+
+    public void approveCompletedAssignment(CompletedAssignment item, Runnable onDone) {
+        if (item == null || item.completedSnapshot == null) {
+            Toast.makeText(context, "بيانات التحديث غير مكتملة", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        try {
+            db.importTeamCompletedJson(new JSONObject(item.completedSnapshot));
+            firestore.collection("fire_manager_assignments").document(item.teamCode)
+                    .collection("items").document(item.assignmentId)
+                    .set(reviewedMarker(), SetOptions.merge())
+                    .addOnSuccessListener(v -> {
+                        ReminderScheduler.scheduleAll(context, db);
+                        Toast.makeText(context, "تم اعتماد تحديث الفني", Toast.LENGTH_SHORT).show();
+                        if (onDone != null) onDone.run();
+                    })
+                    .addOnFailureListener(e -> {
+                        Toast.makeText(context, "فشل اعتماد التحديث: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        if (onDone != null) onDone.run();
+                    });
+        } catch (Exception e) {
+            Toast.makeText(context, "فشل قراءة تحديث الفني: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            if (onDone != null) onDone.run();
+        }
+    }
+
+    public void rejectCompletedAssignment(CompletedAssignment item, Runnable onDone) {
+        if (item == null) {
+            if (onDone != null) onDone.run();
+            return;
+        }
+        Map<String, Object> data = new HashMap<>();
+        data.put("status", "supervisor_rejected");
+        data.put("supervisor_rejected_at", System.currentTimeMillis());
+        firestore.collection("fire_manager_assignments").document(item.teamCode)
+                .collection("items").document(item.assignmentId)
+                .set(data, SetOptions.merge())
+                .addOnSuccessListener(v -> {
+                    Toast.makeText(context, "تم رفض تحديث الفني", Toast.LENGTH_SHORT).show();
+                    if (onDone != null) onDone.run();
+                })
+                .addOnFailureListener(e -> {
+                    Toast.makeText(context, "فشل رفض التحديث: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     if (onDone != null) onDone.run();
                 });
     }
@@ -590,6 +722,36 @@ public class SyncManager {
             this.column = column;
             this.id = id;
             this.uri = uri;
+        }
+    }
+
+    public static class CompletedAssignment {
+        public final String teamCode;
+        public final String assignmentId;
+        public final String customerName;
+        public final String phone;
+        public final String place;
+        public final String location;
+        public final String status;
+        public final String originalSnapshot;
+        public final String completedSnapshot;
+        public final String completedByEmail;
+        public final long completedAt;
+
+        CompletedAssignment(String teamCode, String assignmentId, String customerName, String phone,
+                            String place, String location, String status, String originalSnapshot, String completedSnapshot,
+                            String completedByEmail, long completedAt) {
+            this.teamCode = teamCode;
+            this.assignmentId = assignmentId;
+            this.customerName = customerName;
+            this.phone = phone;
+            this.place = place;
+            this.location = location;
+            this.status = status;
+            this.originalSnapshot = originalSnapshot;
+            this.completedSnapshot = completedSnapshot;
+            this.completedByEmail = completedByEmail;
+            this.completedAt = completedAt;
         }
     }
 
