@@ -1247,6 +1247,28 @@ public class MainActivity extends Activity {
             button("استرجاع من Google", () -> sync.restore(this::showSync));
             button("تسجيل خروج", () -> sync.signOut(this::showSync));
         }
+
+        section("فريق العمل");
+        EditText teamCode = input("كود الفريق المشترك", InputType.TYPE_CLASS_TEXT);
+        teamCode.setText(db.setting("team_code", ""));
+        small("اكتب نفس الكود عند كل فرد في الفريق. أي بيانات يسجلها العضو تقدر تسترجعها عندك من زر استرجاع بيانات الفريق.");
+        button("حفظ كود الفريق", () -> {
+            db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
+            afterSave("تم حفظ كود الفريق");
+            showSync();
+        });
+        if (user != null) {
+            button("رفع بياناتي للفريق", () -> {
+                db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
+                sync.uploadTeam(txt(teamCode), this::showSync);
+            });
+            button("استرجاع بيانات الفريق", () -> {
+                db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
+                sync.restoreTeam(txt(teamCode), this::showSync);
+            });
+        } else {
+            small("بعد تسجيل الدخول بحساب Google هتظهر أزرار رفع واسترجاع بيانات الفريق.");
+        }
         small("لو تسجيل Google رفض، أضف SHA-1 الذي يظهر في GitHub Actions داخل Firebase ثم أعد البناء.");
     }
 
@@ -1290,7 +1312,10 @@ public class MainActivity extends Activity {
         if (syncBadge == null || sync == null) return;
         FirebaseUser user = sync.user();
         boolean connected = user != null;
-        syncBadge.setText(connected ? "متزامن مع Google" : "في انتظار مزامنة Google");
+        String teamCode = db == null ? "" : db.setting("team_code", "");
+        syncBadge.setText(connected
+                ? (teamCode.trim().isEmpty() ? "متزامن مع Google" : "متزامن مع Google + فريق")
+                : "في انتظار مزامنة Google");
         syncBadge.setTextColor(connected ? Color.rgb(22, 101, 52) : Color.rgb(146, 64, 14));
         syncBadge.setBackground(rounded(connected ? Color.rgb(220, 252, 231) : Color.rgb(255, 247, 237),
                 connected ? Color.rgb(134, 239, 172) : Color.rgb(253, 186, 116), dp(10)));
@@ -2244,7 +2269,7 @@ public class MainActivity extends Activity {
     }
 
     private String[] extinguisherWeights() {
-        return new String[]{"1kg", "2kg", "4kg", "5kg", "6kg", "9kg", "10kg", "12kg", "25kg", "50kg"};
+        return new String[]{"6kg", "10kg", "12kg", "25kg", "50kg"};
     }
 
     private void styleStatusChoice(Button button, boolean selected) {

@@ -1,8 +1,13 @@
 package com.safetyoffice.firemanager;
 
 import android.app.Activity;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.widget.Toast;
 
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
@@ -21,11 +26,20 @@ import com.google.firebase.firestore.SetOptions;
 
 import org.json.JSONObject;
 
+import java.io.DataOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class SyncManager {
     public static final int RC_SIGN_IN = 4041;
+    private static final String IMAGE_UPLOAD_URL = "https://smmnoon.com/fire/upload.php";
+    private static final String IMAGE_UPLOAD_TOKEN = "FireManager_smmnoon_2026_7391";
     private final Context context;
     private final DatabaseHelper db;
     private final FirebaseAuth auth;
@@ -83,11 +97,12 @@ public class SyncManager {
             if (onDone != null) onDone.run();
             return;
         }
+        uploadCloudMedia(u, () -> uploadSnapshot(u, onDone));
+    }
+
+    private void uploadSnapshot(FirebaseUser u, Runnable onDone) {
         try {
-            Map<String, Object> data = new HashMap<>();
-            data.put("snapshot", db.exportJson().toString());
-            data.put("updated_at", System.currentTimeMillis());
-            data.put("email", u.getEmail());
+            Map<String, Object> data = snapshotData(u);
             firestore.collection("fire_manager_users").document(u.getUid())
                     .set(data, SetOptions.merge())
                     .addOnSuccessListener(v -> {
@@ -100,6 +115,43 @@ public class SyncManager {
                     });
         } catch (Exception e) {
             Toast.makeText(context, "فشل تجهيز البيانات: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            if (onDone != null) onDone.run();
+        }
+    }
+
+    public void uploadTeam(String teamCode, Runnable onDone) {
+        FirebaseUser u = user();
+        String code = cleanTeamCode(teamCode);
+        if (u == null) {
+            Toast.makeText(context, "سجل دخول جوجل الأول", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        if (code.length() == 0) {
+            Toast.makeText(context, "اكتب كود الفريق الأول", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        uploadCloudMedia(u, () -> uploadTeamSnapshot(u, code, onDone));
+    }
+
+    private void uploadTeamSnapshot(FirebaseUser u, String code, Runnable onDone) {
+        try {
+            Map<String, Object> data = snapshotData(u);
+            data.put("team_code", code);
+            firestore.collection("fire_manager_teams").document(code)
+                    .collection("members").document(u.getUid())
+                    .set(data, SetOptions.merge())
+                    .addOnSuccessListener(v -> {
+                        Toast.makeText(context, "تم رفع بياناتك للفريق", Toast.LENGTH_SHORT).show();
+                        if (onDone != null) onDone.run();
+                    })
+                    .addOnFailureListener(e -> {
+                        Toast.makeText(context, "فشل رفع بيانات الفريق: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        if (onDone != null) onDone.run();
+                    });
+        } catch (Exception e) {
+            Toast.makeText(context, "فشل تجهيز بيانات الفريق: " + e.getMessage(), Toast.LENGTH_LONG).show();
             if (onDone != null) onDone.run();
         }
     }
@@ -119,15 +171,61 @@ public class SyncManager {
                 });
     }
 
+    public void restoreTeam(String teamCode, Runnable onDone) {
+        FirebaseUser u = user();
+        String code = cleanTeamCode(teamCode);
+        if (u == null) {
+            Toast.makeText(context, "سجل دخول جوجل الأول", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        if (code.length() == 0) {
+            Toast.makeText(context, "اكتب كود الفريق الأول", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        firestore.collection("fire_manager_teams").document(code).collection("members").get()
+                .addOnSuccessListener(query -> {
+                    int imported = 0;
+                    try {
+                        for (DocumentSnapshot doc : query.getDocuments()) {
+                            if (doc.getId().equals(u.getUid())) continue;
+                            String snapshot = doc.getString("snapshot");
+                            if (snapshot == null) continue;
+                            db.importTeamJson(new JSONObject(snapshot));
+                            imported++;
+                        }
+                        ReminderScheduler.scheduleAll(context, db);
+                        Toast.makeText(context, imported == 0 ? "لا توجد بيانات جديدة من الفريق" : "تم استرجاع بيانات " + imported + " عضو من الفريق", Toast.LENGTH_LONG).show();
+                    } catch (Exception e) {
+                        Toast.makeText(context, "فشل قراءة بيانات الفريق: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                    if (onDone != null) onDone.run();
+                })
+                .addOnFailureListener(e -> {
+                    Toast.makeText(context, "فشل استرجاع بيانات الفريق: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    if (onDone != null) onDone.run();
+                });
+    }
+
     public void autoUploadQuietly() {
         if (user() == null) return;
-        try {
-            Map<String, Object> data = new HashMap<>();
-            data.put("snapshot", db.exportJson().toString());
-            data.put("updated_at", System.currentTimeMillis());
-            firestore.collection("fire_manager_users").document(user().getUid()).set(data, SetOptions.merge());
-        } catch (Exception ignored) {
-        }
+        FirebaseUser u = user();
+        uploadCloudMedia(u, () -> {
+            try {
+            Map<String, Object> data = snapshotData(u);
+            firestore.collection("fire_manager_users").document(u.getUid()).set(data, SetOptions.merge());
+            String teamCode = cleanTeamCode(db.setting("team_code", ""));
+            if (teamCode.length() > 0) {
+                Map<String, Object> teamData = new HashMap<>(data);
+                teamData.put("team_code", teamCode);
+                firestore.collection("fire_manager_teams").document(teamCode)
+                        .collection("members").document(u.getUid())
+                        .set(teamData, SetOptions.merge());
+            }
+            } catch (Exception ignored) {
+            }
+        });
     }
 
     private void restoreThenUpload(Runnable onDone) {
@@ -151,5 +249,153 @@ public class SyncManager {
             Toast.makeText(context, "فشل قراءة نسخة جوجل: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
         if (onDone != null) onDone.run();
+    }
+
+    private Map<String, Object> snapshotData(FirebaseUser user) throws Exception {
+        Map<String, Object> data = new HashMap<>();
+        data.put("snapshot", db.exportJson().toString());
+        data.put("updated_at", System.currentTimeMillis());
+        data.put("email", user.getEmail());
+        return data;
+    }
+
+    private void uploadCloudMedia(FirebaseUser user, Runnable onDone) {
+        new Thread(() -> {
+            List<MediaRef> refs = localMediaRefs();
+            for (MediaRef item : refs) {
+                String uploadedUrl = uploadMediaToHosting(user, item);
+                if (uploadedUrl == null || uploadedUrl.length() == 0) continue;
+                ContentValues cv = new ContentValues();
+                cv.put(item.column, uploadedUrl);
+                db.update(item.table, cv, "id=?", String.valueOf(item.id));
+            }
+            runOnMain(onDone);
+        }).start();
+    }
+
+    private String uploadMediaToHosting(FirebaseUser user, MediaRef item) {
+        HttpURLConnection connection = null;
+        String boundary = "----FireManager" + System.currentTimeMillis();
+        try {
+            Uri uri = Uri.parse(item.uri);
+            String mime = context.getContentResolver().getType(uri);
+            if (mime == null || mime.trim().isEmpty()) mime = "image/jpeg";
+            String fileName = item.table + "_" + item.id + ".jpg";
+
+            connection = (HttpURLConnection) new URL(IMAGE_UPLOAD_URL).openConnection();
+            connection.setConnectTimeout(20000);
+            connection.setReadTimeout(30000);
+            connection.setRequestMethod("POST");
+            connection.setDoInput(true);
+            connection.setDoOutput(true);
+            connection.setUseCaches(false);
+            connection.setRequestProperty("X-Upload-Token", IMAGE_UPLOAD_TOKEN);
+            connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+
+            DataOutputStream out = new DataOutputStream(connection.getOutputStream());
+            writeFormField(out, boundary, "token", IMAGE_UPLOAD_TOKEN);
+            writeFormField(out, boundary, "team_code", db.setting("team_code", "team"));
+            writeFormField(out, boundary, "customer", item.table + "_" + item.id);
+            writeFormField(out, boundary, "device", user.getUid());
+            writeFileField(out, boundary, "file", fileName, mime, uri);
+            out.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            out.close();
+
+            int code = connection.getResponseCode();
+            InputStream response = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            JSONObject json = new JSONObject(readAll(response));
+            if (code >= 200 && code < 300 && json.optBoolean("ok")) {
+                return json.optString("url", "");
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+        return null;
+    }
+
+    private void writeFormField(DataOutputStream out, String boundary, String name, String value) throws Exception {
+        out.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+        out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void writeFileField(DataOutputStream out, String boundary, String name, String fileName, String mime, Uri uri) throws Exception {
+        out.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("Content-Disposition: form-data; name=\"" + name + "\"; filename=\"" + fileName + "\"\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("Content-Type: " + mime + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        InputStream input = context.getContentResolver().openInputStream(uri);
+        if (input == null) throw new IllegalStateException("Cannot open image");
+        byte[] buffer = new byte[8192];
+        int read;
+        try {
+            while ((read = input.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+            }
+        } finally {
+            input.close();
+        }
+        out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String readAll(InputStream input) throws Exception {
+        if (input == null) return "{}";
+        byte[] buffer = new byte[4096];
+        StringBuilder builder = new StringBuilder();
+        int read;
+        try {
+            while ((read = input.read(buffer)) != -1) {
+                builder.append(new String(buffer, 0, read, StandardCharsets.UTF_8));
+            }
+        } finally {
+            input.close();
+        }
+        return builder.toString();
+    }
+
+    private void runOnMain(Runnable action) {
+        if (action == null) return;
+        new Handler(Looper.getMainLooper()).post(action);
+    }
+
+    private List<MediaRef> localMediaRefs() {
+        List<MediaRef> refs = new ArrayList<>();
+        collectLocalMedia(refs, "extinguishers", "image_uri");
+        collectLocalMedia(refs, "extinguisher_images", "uri");
+        collectLocalMedia(refs, "customer_attachments", "uri");
+        return refs;
+    }
+
+    private void collectLocalMedia(List<MediaRef> refs, String table, String column) {
+        Cursor c = db.raw("SELECT id, " + column + " FROM " + table +
+                " WHERE IFNULL(" + column + ",'')<>'' AND " + column + " NOT LIKE 'http%'", null);
+        try {
+            while (c.moveToNext()) {
+                refs.add(new MediaRef(table, column, c.getLong(0), c.getString(1)));
+            }
+        } finally {
+            c.close();
+        }
+    }
+
+    private static class MediaRef {
+        final String table;
+        final String column;
+        final long id;
+        final String uri;
+
+        MediaRef(String table, String column, long id, String uri) {
+            this.table = table;
+            this.column = column;
+            this.id = id;
+            this.uri = uri;
+        }
+    }
+
+    private String cleanTeamCode(String raw) {
+        if (raw == null) return "";
+        return raw.trim().replace("/", "_");
     }
 }

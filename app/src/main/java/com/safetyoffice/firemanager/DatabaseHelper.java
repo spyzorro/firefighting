@@ -10,11 +10,13 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String DB_NAME = "fire_salary_manager.db";
-    public static final int DB_VERSION = 9;
+    public static final int DB_VERSION = 10;
 
     private static final List<String> TABLES = Arrays.asList(
             "employees", "advances", "customers", "extinguishers",
@@ -106,6 +108,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
         if (oldVersion < 9) {
             addColumnIfMissing(db, "extinguishers", "paid_amount", "REAL DEFAULT 0");
+            createSettings(db);
+        }
+        if (oldVersion < 10) {
             createSettings(db);
         }
     }
@@ -231,6 +236,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         insertDefaultSetting(db, "certificate_percent", "0");
         insertDefaultSetting(db, "report_percent", "0");
         insertDefaultSetting(db, "auto_save_contacts", "0");
+        insertDefaultSetting(db, "team_code", "");
         insertDefaultSetting(db, "selected_whatsapp_template", "0");
         insertDefaultSetting(db, "whatsapp_templates", defaultWhatsappTemplates());
     }
@@ -396,5 +402,91 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         } finally {
             db.endTransaction();
         }
+    }
+
+    public void importTeamJson(JSONObject root) throws Exception {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            Map<Long, Long> extinguisherIds = new HashMap<>();
+            for (String table : TABLES) {
+                if ("settings".equals(table) || !root.has(table)) continue;
+                JSONArray rows = root.getJSONArray(table);
+                for (int i = 0; i < rows.length(); i++) {
+                    JSONObject row = rows.getJSONObject(i);
+                    if (teamRowExists(db, table, row)) continue;
+                    if ("extinguishers".equals(table)) {
+                        long oldId = row.optLong("id", -1);
+                        ContentValues cv = rowValues(row, "id", "customer_id");
+                        long newId = db.insert(table, null, cv);
+                        if (oldId > 0 && newId > 0) extinguisherIds.put(oldId, newId);
+                    } else if ("extinguisher_images".equals(table)) {
+                        long oldExtinguisherId = row.optLong("extinguisher_id", -1);
+                        if (oldExtinguisherId > 0 && !extinguisherIds.containsKey(oldExtinguisherId)) continue;
+                        ContentValues cv = rowValues(row, "id");
+                        if (oldExtinguisherId > 0) cv.put("extinguisher_id", extinguisherIds.get(oldExtinguisherId));
+                        db.insert(table, null, cv);
+                    } else {
+                        db.insert(table, null, rowValues(row, "id"));
+                    }
+                }
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    private boolean teamRowExists(SQLiteDatabase db, String table, JSONObject row) {
+        if (!row.has("created_at")) return false;
+        String identityColumn = teamIdentityColumn(row);
+        String where = "created_at=?";
+        String[] args;
+        if (identityColumn.length() > 0) {
+            where += " AND IFNULL(" + identityColumn + ",'')=?";
+            args = new String[]{String.valueOf(row.optLong("created_at")), row.optString(identityColumn, "")};
+        } else {
+            args = new String[]{String.valueOf(row.optLong("created_at"))};
+        }
+        Cursor c = db.query(table, new String[]{"id"}, where, args, null, null, null, "1");
+        try {
+            return c.moveToFirst();
+        } finally {
+            c.close();
+        }
+    }
+
+    private String teamIdentityColumn(JSONObject row) {
+        if (row.has("uri")) return "uri";
+        if (row.has("image_uri")) return "image_uri";
+        if (row.has("customer_name")) return "customer_name";
+        if (row.has("employee_name")) return "employee_name";
+        if (row.has("name")) return "name";
+        if (row.has("title")) return "title";
+        return "";
+    }
+
+    private ContentValues rowValues(JSONObject row, String... skipKeys) throws Exception {
+        ContentValues cv = new ContentValues();
+        JSONArray names = row.names();
+        if (names == null) return cv;
+        for (int n = 0; n < names.length(); n++) {
+            String key = names.getString(n);
+            if (isSkipped(key, skipKeys)) continue;
+            Object value = row.get(key);
+            if (value == JSONObject.NULL) cv.putNull(key);
+            else if (value instanceof Integer) cv.put(key, (Integer) value);
+            else if (value instanceof Long) cv.put(key, (Long) value);
+            else if (value instanceof Double) cv.put(key, (Double) value);
+            else cv.put(key, String.valueOf(value));
+        }
+        return cv;
+    }
+
+    private boolean isSkipped(String key, String... skipKeys) {
+        for (String skip : skipKeys) {
+            if (skip.equals(key)) return true;
+        }
+        return false;
     }
 }
