@@ -316,10 +316,30 @@ public class MainActivity extends Activity {
         if (sync == null || sync.user() == null) return;
         if (isSupervisorUser() && !appVersionPublished) {
             appVersionPublished = true;
-            sync.publishRequiredUpdate(BuildConfig.VERSION_CODE, BuildConfig.VERSION_NAME);
+            sync.publishRequiredUpdate(appVersionCode(), appVersionName());
         } else if (isTechnicianUser() && !appUpdateChecked) {
             appUpdateChecked = true;
-            sync.checkRequiredUpdate(BuildConfig.VERSION_CODE, this::showRequiredUpdate);
+            sync.checkRequiredUpdate(appVersionCode(), this::showRequiredUpdate);
+        }
+    }
+
+    private int appVersionCode() {
+        try {
+            if (Build.VERSION.SDK_INT >= 28) {
+                return (int) getPackageManager().getPackageInfo(getPackageName(), 0).getLongVersionCode();
+            }
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private String appVersionName() {
+        try {
+            String name = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            return name == null ? "" : name;
+        } catch (Exception e) {
+            return "";
         }
     }
 

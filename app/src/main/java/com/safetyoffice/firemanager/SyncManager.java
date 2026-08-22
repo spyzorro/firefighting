@@ -569,7 +569,7 @@ public class SyncManager {
 
     private void collectLocalMedia(List<MediaRef> refs, String table, String column) {
         Cursor c = db.raw("SELECT id, " + column + " FROM " + table +
-                " WHERE IFNULL(" + column + ",'')<>'' AND " + column + " NOT LIKE 'http%'", null);
+                " WHERE IFNULL(" + column + ",'')<>'' AND " + column + " NOT LIKE 'http%'");
         try {
             while (c.moveToNext()) {
                 refs.add(new MediaRef(table, column, c.getLong(0), c.getString(1)));
