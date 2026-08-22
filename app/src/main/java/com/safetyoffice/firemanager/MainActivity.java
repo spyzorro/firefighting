@@ -81,6 +81,8 @@ public class MainActivity extends Activity {
 
     private DatabaseHelper db;
     private SyncManager sync;
+    private boolean appUpdateChecked;
+    private boolean appVersionPublished;
     private LinearLayout content;
     private TextView syncBadge;
     private EditText voiceTarget;
@@ -252,6 +254,7 @@ public class MainActivity extends Activity {
     private void showHome() {
         currentTab = "home";
         clear();
+        syncAppVersionState();
         if (isTechnicianUser()) {
             hero("تكليفاتي",
                     "هذه نسخة الفني. لن يظهر هنا إلا العملاء الذين حولهم لك المشرف بالكود.");
@@ -307,6 +310,33 @@ public class MainActivity extends Activity {
 
     private boolean isTechnicianUser() {
         return sync != null && sync.user() != null && !isSupervisorUser();
+    }
+
+    private void syncAppVersionState() {
+        if (sync == null || sync.user() == null) return;
+        if (isSupervisorUser() && !appVersionPublished) {
+            appVersionPublished = true;
+            sync.publishRequiredUpdate(BuildConfig.VERSION_CODE, BuildConfig.VERSION_NAME);
+        } else if (isTechnicianUser() && !appUpdateChecked) {
+            appUpdateChecked = true;
+            sync.checkRequiredUpdate(BuildConfig.VERSION_CODE, this::showRequiredUpdate);
+        }
+    }
+
+    private void showRequiredUpdate(String versionName, String apkUrl) {
+        String version = safe(versionName).isEmpty() ? "الجديدة" : versionName;
+        new AlertDialog.Builder(this)
+                .setTitle("تحديث مطلوب")
+                .setMessage("لازم تثبت نسخة " + version + " قبل متابعة استخدام التطبيق.")
+                .setCancelable(false)
+                .setPositiveButton("تحميل التحديث", (dialog, which) -> {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)));
+                    } catch (Exception e) {
+                        toast("تعذر فتح رابط التحديث");
+                    }
+                })
+                .show();
     }
 
     private void showTasks() {
@@ -1381,6 +1411,7 @@ public class MainActivity extends Activity {
         clear();
         section("Google Sync");
         FirebaseUser user = sync.user();
+        syncAppVersionState();
         if (user == null) {
             small("سجل بحساب Google علشان التطبيق يحفظ ويرجع بياناتك تلقائيا على Firebase.");
             button("تسجيل بحساب Google", () -> sync.signIn(this));
@@ -1426,7 +1457,6 @@ public class MainActivity extends Activity {
         } else {
             small("بعد تسجيل الدخول بحساب Google ستظهر أزرار المشرف أو أزرار الفني حسب الإيميل.");
         }
-        small("لو تسجيل Google رفض برقم 10، أضف SHA-1 و SHA-256 من GitHub Actions داخل Firebase، ثم حمل google-services.json جديد وضعه في Secret.");
     }
 
     private void listAnnual(String table, String dateColumn, String label) {

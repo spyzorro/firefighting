@@ -42,6 +42,7 @@ public class SyncManager {
     private static final String IMAGE_UPLOAD_URL = "https://smmnoon.com/fire/upload.php";
     private static final String IMAGE_UPLOAD_TOKEN = "FireManager_smmnoon_2026_7391";
     private static final String DEFAULT_SUPERVISOR_EMAIL = "mohamede669@gmail.com";
+    private static final String UPDATE_APK_URL = "https://smmnoon.com/fire/fire-salary-manager.apk";
     private final Context context;
     private final DatabaseHelper db;
     private final FirebaseAuth auth;
@@ -82,10 +83,7 @@ public class SyncManager {
                         if (onDone != null) onDone.run();
                     });
         } catch (ApiException e) {
-            String message = e.getStatusCode() == 10
-                    ? "فشل تسجيل Google رقم 10: أضف SHA-1 و SHA-256 لنفس توقيع APK داخل Firebase ثم حمل google-services.json الجديد"
-                    : "لم يتم تسجيل الدخول: " + e.getMessage();
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show();
+            Toast.makeText(context, "لم يتم تسجيل الدخول. راجع إعدادات Google في Firebase.", Toast.LENGTH_LONG).show();
             if (onDone != null) onDone.run();
         } catch (Exception e) {
             Toast.makeText(context, "لم يتم تسجيل الدخول: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -97,6 +95,34 @@ public class SyncManager {
         auth.signOut();
         Toast.makeText(context, "تم تسجيل الخروج", Toast.LENGTH_SHORT).show();
         if (onDone != null) onDone.run();
+    }
+
+    public void publishRequiredUpdate(int versionCode, String versionName) {
+        FirebaseUser u = user();
+        if (u == null || u.getEmail() == null || !DEFAULT_SUPERVISOR_EMAIL.equalsIgnoreCase(u.getEmail())) return;
+        Map<String, Object> data = new HashMap<>();
+        data.put("min_version_code", versionCode);
+        data.put("version_name", versionName);
+        data.put("apk_url", UPDATE_APK_URL);
+        data.put("supervisor_email", u.getEmail());
+        data.put("updated_at", System.currentTimeMillis());
+        firestore.collection("fire_manager_app_config").document("current").set(data, SetOptions.merge());
+    }
+
+    public void checkRequiredUpdate(int currentVersionCode, UpdateListener listener) {
+        firestore.collection("fire_manager_app_config").document("current").get()
+                .addOnSuccessListener(doc -> {
+                    if (!doc.exists()) return;
+                    long minVersion = doc.getLong("min_version_code") == null ? 0 : doc.getLong("min_version_code");
+                    if (minVersion <= currentVersionCode) return;
+                    String versionName = doc.getString("version_name");
+                    String apkUrl = doc.getString("apk_url");
+                    if (listener != null) listener.onUpdateRequired(versionName, apkUrl == null ? UPDATE_APK_URL : apkUrl);
+                });
+    }
+
+    public interface UpdateListener {
+        void onUpdateRequired(String versionName, String apkUrl);
     }
 
     public void upload(Runnable onDone) {
