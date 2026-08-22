@@ -1,33 +1,41 @@
 {
   "project_info": {
-    "project_number": "000000000000",
-    "project_id": "fire-manager-placeholder",
-    "storage_bucket": "fire-manager-placeholder.appspot.com"
+    "project_number": "174128710026",
+    "project_id": "firefight-a2e85",
+    "storage_bucket": "firefight-a2e85.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+        "mobilesdk_app_id": "1:174128710026:android:5f7e57d39f8b92fd3e4873",
         "android_client_info": {
           "package_name": "com.safetyoffice.firemanager"
         }
       },
       "oauth_client": [
         {
-          "client_id": "000000000000-placeholder.apps.googleusercontent.com",
+          "client_id": "174128710026-q8qsji1ev3nulo2o9nc9ruefm5qqpg9m.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.safetyoffice.firemanager",
+            "certificate_hash": "bf74816f1ebdbb6c6cd4a84333ed838587194cd9"
+          }
+        },
+        {
+          "client_id": "174128710026-2kimvcbiiak8oeid8mtg3vivkqhtt3ak.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "REPLACE_WITH_REAL_FIREBASE_API_KEY"
+          "current_key": "AIzaSyB6hzpfUU_UMQzzOx3yGnnR7oMYSILcpeA"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "000000000000-placeholder.apps.googleusercontent.com",
+              "client_id": "174128710026-2kimvcbiiak8oeid8mtg3vivkqhtt3ak.apps.googleusercontent.com",
               "client_type": 3
             }
           ]
