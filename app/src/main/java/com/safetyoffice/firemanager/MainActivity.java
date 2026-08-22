@@ -250,6 +250,7 @@ public class MainActivity extends Activity {
         addTab(tabs, "تسجيل", R.drawable.ic_nav_extinguisher, v -> showExtinguishers());
         addTab(tabs, "العملاء", R.drawable.ic_nav_customers, v -> showCustomers());
         addTab(tabs, "تنبيهات", R.drawable.ic_nav_alerts, v -> showAlerts());
+        addTab(tabs, "الفنيين", R.drawable.ic_nav_sync, v -> showTeamInbox());
         addTab(tabs, "التقرير", R.drawable.ic_nav_report, v -> showMonthlyReport());
         addTab(tabs, "المهام", R.drawable.ic_nav_tasks, v -> showTasks());
         addTab(tabs, "المزيد", R.drawable.ic_nav_settings, v -> showMore());
@@ -1597,7 +1598,7 @@ public class MainActivity extends Activity {
             db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
             loadTeamInbox(txt(teamCode));
         });
-        loadTeamInbox(db.setting("team_code", ""));
+        small("اكتب كود الفريق واضغط تحديث القائمة. الصفحة لا تحمل الصور تلقائيا عشان تفضل سريعة وثابتة.");
     }
 
     private void loadTeamInbox(String teamCode) {
@@ -1640,8 +1641,11 @@ public class MainActivity extends Activity {
                     assignmentReviewText(item));
             ArrayList<String> images = snapshotImageUris(item.completedSnapshot);
             if (!images.isEmpty()) {
-                small("صور الفني:");
-                for (String uri : images) imagePreview(uri);
+                small("صور الفني: " + images.size());
+                for (int i = 0; i < images.size(); i++) {
+                    String uri = images.get(i);
+                    secondaryButton("فتح صورة الفني " + (i + 1), () -> openAttachment(uri));
+                }
             }
             String status = emptyForDb(item.status);
             if ("completed".equals(status)) {
@@ -2195,19 +2199,48 @@ public class MainActivity extends Activity {
         if (uri.startsWith("http://") || uri.startsWith("https://")) {
             new Thread(() -> {
                 try {
-                    InputStream input = new URL(uri).openStream();
-                    Bitmap bitmap = BitmapFactory.decodeStream(input);
-                    input.close();
+                    Bitmap bitmap = decodeRemotePreview(uri);
+                    if (bitmap == null) return;
                     runOnUiThread(() -> preview.setImageBitmap(bitmap));
-                } catch (Exception ignored) {
+                } catch (Throwable ignored) {
                 }
             }).start();
         } else {
             try {
                 preview.setImageURI(Uri.parse(uri));
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
         }
+    }
+
+    private Bitmap decodeRemotePreview(String uri) throws Exception {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        InputStream first = new URL(uri).openStream();
+        try {
+            BitmapFactory.decodeStream(first, null, bounds);
+        } finally {
+            first.close();
+        }
+
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = previewSampleSize(bounds, 1200, 900);
+        InputStream second = new URL(uri).openStream();
+        try {
+            return BitmapFactory.decodeStream(second, null, options);
+        } finally {
+            second.close();
+        }
+    }
+
+    private int previewSampleSize(BitmapFactory.Options options, int reqWidth, int reqHeight) {
+        int height = options.outHeight;
+        int width = options.outWidth;
+        int sample = 1;
+        while (height / sample > reqHeight || width / sample > reqWidth) {
+            sample *= 2;
+        }
+        return Math.max(1, sample);
     }
 
     private void confirmDeleteExtinguisherImage(long extinguisherId, String uri, Runnable refresh) {
