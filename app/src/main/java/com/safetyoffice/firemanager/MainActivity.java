@@ -1637,7 +1637,10 @@ public class MainActivity extends Activity {
             secondaryButton("رجوع", this::showHome);
             return;
         }
+        int visible = 0;
         for (SyncManager.CompletedAssignment item : assignments) {
+            if ("open".equals(emptyForDb(item.status)) && item.rejectedAt > 0) continue;
+            visible++;
             card(emptyForDb(item.customerName).isEmpty() ? "تحديث فني" : item.customerName,
                     assignmentReviewText(item));
             if (!emptyForDb(item.completedSnapshot).isEmpty()) {
@@ -1664,6 +1667,9 @@ public class MainActivity extends Activity {
             } else if ("supervisor_rejected".equals(status)) {
                 small("تم رفض هذا التحديث سابقا.");
             }
+        }
+        if (visible == 0) {
+            card("لا توجد تحديثات للمراجعة", "أي تحديث مرفوض يرجع للفنيين للتعديل ولن يظهر هنا إلا بعد تسليمه مرة أخرى.");
         }
         secondaryButton("رجوع", this::showHome);
     }

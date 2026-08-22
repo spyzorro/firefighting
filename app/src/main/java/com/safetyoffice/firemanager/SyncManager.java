@@ -476,7 +476,8 @@ public class SyncManager {
                                     doc.getString("snapshot"),
                                     doc.getString("completed_snapshot"),
                                     doc.getString("completed_by_email"),
-                                    asLong(doc.get("completed_at"))
+                                    asLong(doc.get("completed_at")),
+                                    asLong(doc.get("supervisor_rejected_at"))
                             ));
                         } catch (Exception ignored) {
                         }
@@ -495,6 +496,7 @@ public class SyncManager {
             return;
         }
         try {
+            db.deleteCustomerEverywhere(item.customerName, item.phone, item.place, item.location);
             db.importTeamCompletedJson(new JSONObject(item.completedSnapshot));
             firestore.collection("fire_manager_assignments").document(item.teamCode)
                     .collection("items").document(item.assignmentId)
@@ -753,10 +755,11 @@ public class SyncManager {
         public final String completedSnapshot;
         public final String completedByEmail;
         public final long completedAt;
+        public final long rejectedAt;
 
         CompletedAssignment(String teamCode, String assignmentId, String customerName, String phone,
                             String place, String location, String status, String originalSnapshot, String completedSnapshot,
-                            String completedByEmail, long completedAt) {
+                            String completedByEmail, long completedAt, long rejectedAt) {
             this.teamCode = teamCode;
             this.assignmentId = assignmentId;
             this.customerName = customerName;
@@ -768,6 +771,7 @@ public class SyncManager {
             this.completedSnapshot = completedSnapshot;
             this.completedByEmail = completedByEmail;
             this.completedAt = completedAt;
+            this.rejectedAt = rejectedAt;
         }
     }
 
