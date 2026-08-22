@@ -73,6 +73,7 @@ public class MainActivity extends Activity {
     private static final int BRAND_DARK = Color.rgb(2, 6, 23);
     private static final int BRAND_LIGHT = Color.rgb(241, 245, 249);
     private static final int ACCENT = Color.rgb(220, 38, 38);
+    private static final String SUPERVISOR_EMAIL = "mohamede669@gmail.com";
     private static final int BG = Color.rgb(248, 250, 252);
     private static final int CARD = Color.rgb(255, 255, 255);
     private static final int BORDER = Color.rgb(203, 213, 225);
@@ -251,6 +252,15 @@ public class MainActivity extends Activity {
     private void showHome() {
         currentTab = "home";
         clear();
+        if (isTechnicianUser()) {
+            hero("تكليفاتي",
+                    "هذه نسخة الفني. لن يظهر هنا إلا العملاء الذين حولهم لك المشرف بالكود.");
+            button("استلام التكليفات المرسلة لي", this::showSync);
+            section("اختصارات");
+            homeAction("العملاء المحولون", "الشغل المرسل لك فقط", this::showCustomers);
+            homeAction("مزامنة Google", "استلام التكليفات وإرسال التحديث", this::showSync);
+            return;
+        }
         double total = singleDouble("SELECT COALESCE(SUM(total_price),0) FROM extinguishers");
         int count = (int) singleDouble("SELECT COALESCE(SUM(count),0) FROM extinguishers");
         int customers = (int) singleDouble("SELECT COUNT(*) FROM customers");
@@ -278,11 +288,25 @@ public class MainActivity extends Activity {
         currentTab = "more";
         clear();
         section("المزيد");
+        if (isTechnicianUser()) {
+            homeAction("العملاء المحولون", "الشغل المرسل لك فقط", this::showCustomers);
+            homeAction("مزامنة Google", "استلام التكليفات وإرسال التحديث", this::showSync);
+            return;
+        }
         homeAction("المرتبات والسلف", "تسجيل المرتبات والسلف الشهرية", this::showSalaries);
         homeAction("الشهادات والتقارير", "شهادات السلامة والتقارير الفنية", this::showCertificates);
         homeAction("عقود الصيانة", "زيارات كل 3 شهور وتنبيهات", this::showMaintenance);
         homeAction("الإعدادات", "النسب، واتساب، جهات الاتصال، ونسخة احتياطية", this::showSettings);
         homeAction("مزامنة Google", "حفظ واسترجاع البيانات", this::showSync);
+    }
+
+    private boolean isSupervisorUser() {
+        FirebaseUser user = sync == null ? null : sync.user();
+        return user != null && SUPERVISOR_EMAIL.equalsIgnoreCase(safe(user.getEmail()).trim());
+    }
+
+    private boolean isTechnicianUser() {
+        return sync != null && sync.user() != null && !isSupervisorUser();
     }
 
     private void showTasks() {
@@ -397,6 +421,13 @@ public class MainActivity extends Activity {
     private void showExtinguishers() {
         currentTab = "extinguishers";
         clear();
+        if (isTechnicianUser()) {
+            section("تكليفات الفريق فقط");
+            small("الفني لا يسجل عملاء جدد من هنا. استلم التكليفات من المشرف ثم افتح العميل المحول وعدل بياناته أو ارفع الصور.");
+            button("استلام التكليفات", this::showSync);
+            secondaryButton("العملاء المحولون", this::showCustomers);
+            return;
+        }
         pendingExtinguisherImageUri = "";
         pendingExtinguisherImageUris.clear();
         pendingCameraImageUri = null;
@@ -622,6 +653,9 @@ public class MainActivity extends Activity {
                 String status = emptyForDb(c.getString(4));
                 int extinguisherCount = c.getInt(5);
                 double totalPrice = c.getDouble(6);
+                if (isTechnicianUser() && db.teamAssignmentValue(oldName, oldPhone, oldPlace, oldLocation, "assignment_id").isEmpty()) {
+                    continue;
+                }
                 card(oldName,
                         "رقم: " + safe(oldPhone) +
                                 "\nاسم المكان: " + safe(oldPlace) +
@@ -655,10 +689,12 @@ public class MainActivity extends Activity {
         });
         secondaryButton("تعديل بيانات العميل", () -> showCustomerEditPage(name, phone, place, location));
         secondaryButton("تغيير الحالة", () -> showCustomerStatusPage(name, phone, place, location, status));
-        secondaryButton("تحويل للفريق", () -> showAssignCustomerToTeam(name, phone, place, location, status, extinguisherCount, totalPrice));
+        if (isSupervisorUser()) {
+            secondaryButton("تحويل للفريق", () -> showAssignCustomerToTeam(name, phone, place, location, status, extinguisherCount, totalPrice));
+        }
         String assignmentId = db.teamAssignmentValue(name, phone, place, location, "assignment_id");
         String assignmentTeam = db.teamAssignmentValue(name, phone, place, location, "team_code");
-        if (!assignmentId.isEmpty()) {
+        if (isTechnicianUser() && !assignmentId.isEmpty()) {
             secondaryButton("إنهاء وإرسال للمشرف", () -> finishTeamAssignment(assignmentTeam, assignmentId, name, phone, place, location));
         }
         secondaryButton("رجوع للعملاء", this::showCustomers);
@@ -668,6 +704,12 @@ public class MainActivity extends Activity {
                                           int extinguisherCount, double totalPrice) {
         currentTab = "assign_customer";
         clear();
+        if (!isSupervisorUser()) {
+            section("غير مصرح");
+            small("تحويل العملاء للفريق متاح للمشرف فقط.");
+            secondaryButton("رجوع", this::showCustomers);
+            return;
+        }
         section("تحويل العميل للفريق");
         card(name,
                 "رقم: " + safe(phone) +
@@ -1109,6 +1151,12 @@ public class MainActivity extends Activity {
     private void showMonthlyReport() {
         currentTab = "report";
         clear();
+        if (isTechnicianUser()) {
+            section("غير متاح للفني");
+            small("التقارير العامة تظهر للمشرف فقط. الفني يرى العملاء المحولين له من صفحة العملاء.");
+            button("العملاء المحولون", this::showCustomers);
+            return;
+        }
         section("تقرير الشهر الحالي");
         button("تصدير Excel الشهر", this::exportMonthlyExcel);
         button("تصدير تقرير الشهر PDF", this::exportMonthlyPdf);
@@ -1185,6 +1233,12 @@ public class MainActivity extends Activity {
     private void showAlerts() {
         currentTab = "alerts";
         clear();
+        if (isTechnicianUser()) {
+            section("غير متاح للفني");
+            small("التنبيهات العامة تظهر للمشرف فقط. الفني يرى العملاء المحولين له من صفحة العملاء.");
+            button("العملاء المحولون", this::showCustomers);
+            return;
+        }
         section("تنبيهات قريبة");
         long now = System.currentTimeMillis();
         long soon = now + 30L * 24L * 60L * 60L * 1000L;
@@ -1340,31 +1394,37 @@ public class MainActivity extends Activity {
         section("فريق العمل");
         EditText teamCode = input("كود الفريق المشترك", InputType.TYPE_CLASS_TEXT);
         teamCode.setText(db.setting("team_code", ""));
-        small("اكتب نفس الكود عند كل فرد في الفريق. أي بيانات يسجلها العضو تقدر تسترجعها عندك من زر استرجاع بيانات الفريق.");
+        small(isSupervisorUser()
+                ? "أنت مشرف. تقدر تحول عملاء للفريق وتستلم تحديثاتهم."
+                : "أنت فني. سيظهر لك فقط الشغل الذي يحوله المشرف لهذا الكود.");
         button("حفظ كود الفريق", () -> {
             db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
             afterSave("تم حفظ كود الفريق");
             showSync();
         });
         if (user != null) {
-            button("رفع بياناتي للفريق", () -> {
-                db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
-                sync.uploadTeam(txt(teamCode), this::showSync);
-            });
-            button("استرجاع بيانات الفريق", () -> {
-                db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
-                sync.restoreTeam(txt(teamCode), this::showSync);
-            });
+            if (isSupervisorUser()) {
+                button("رفع بياناتي للفريق", () -> {
+                    db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
+                    sync.uploadTeam(txt(teamCode), this::showSync);
+                });
+                button("استرجاع بيانات الفريق", () -> {
+                    db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
+                    sync.restoreTeam(txt(teamCode), this::showSync);
+                });
+            }
             button("استلام التكليفات المرسلة للكود", () -> {
                 db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
                 sync.restoreAssignments(txt(teamCode), this::showCustomers);
             });
-            button("استلام تحديثات الفريق المنتهية", () -> {
-                db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
-                sync.restoreCompletedAssignments(txt(teamCode), this::showCustomers);
-            });
+            if (isSupervisorUser()) {
+                button("استلام تحديثات الفريق المنتهية", () -> {
+                    db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
+                    sync.restoreCompletedAssignments(txt(teamCode), this::showCustomers);
+                });
+            }
         } else {
-            small("بعد تسجيل الدخول بحساب Google هتظهر أزرار رفع واسترجاع بيانات الفريق.");
+            small("بعد تسجيل الدخول بحساب Google ستظهر أزرار المشرف أو أزرار الفني حسب الإيميل.");
         }
         small("لو تسجيل Google رفض برقم 10، أضف SHA-1 و SHA-256 من GitHub Actions داخل Firebase، ثم حمل google-services.json جديد وضعه في Secret.");
     }
