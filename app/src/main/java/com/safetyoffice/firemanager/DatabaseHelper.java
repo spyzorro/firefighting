@@ -16,7 +16,7 @@ import java.util.Map;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String DB_NAME = "fire_salary_manager.db";
-    public static final int DB_VERSION = 10;
+    public static final int DB_VERSION = 11;
 
     private static final List<String> TABLES = Arrays.asList(
             "employees", "advances", "customers", "extinguishers",
@@ -70,6 +70,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, note TEXT, " +
                 "due_date INTEGER DEFAULT 0, is_done INTEGER DEFAULT 0, created_at INTEGER NOT NULL)");
 
+        createTeamAssignments(db);
         createSettings(db);
     }
 
@@ -113,6 +114,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (oldVersion < 10) {
             createSettings(db);
         }
+        if (oldVersion < 11) {
+            createTeamAssignments(db);
+        }
     }
 
     public long insert(String table, ContentValues values) {
@@ -150,6 +154,55 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         cv.put("key", key);
         cv.put("value", value);
         getWritableDatabase().insertWithOnConflict("settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    public void saveTeamAssignment(String assignmentId, String teamCode, String name, String phone, String place, String location) {
+        ContentValues cv = new ContentValues();
+        cv.put("assignment_id", assignmentId);
+        cv.put("team_code", teamCode);
+        cv.put("customer_name", name);
+        cv.put("phone", phone);
+        cv.put("place_name", place);
+        cv.put("location", location);
+        cv.put("status", "open");
+        cv.put("created_at", System.currentTimeMillis());
+        getWritableDatabase().insertWithOnConflict("team_assignments", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    public String teamAssignmentValue(String name, String phone, String place, String location, String column) {
+        Cursor c = getReadableDatabase().query("team_assignments", new String[]{column},
+                "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? AND status='open'",
+                new String[]{name, safe(phone), safe(place), safe(location)}, null, null, "created_at DESC", "1");
+        try {
+            return c.moveToFirst() ? safe(c.getString(0)) : "";
+        } finally {
+            c.close();
+        }
+    }
+
+    public void closeTeamAssignment(String assignmentId) {
+        ContentValues cv = new ContentValues();
+        cv.put("status", "completed");
+        getWritableDatabase().update("team_assignments", cv, "assignment_id=?", new String[]{assignmentId});
+    }
+
+    public void deleteCustomerEverywhere(String name, String phone, String place, String location) {
+        SQLiteDatabase db = getWritableDatabase();
+        String[] args = new String[]{name, safe(phone), safe(place), safe(location)};
+        db.beginTransaction();
+        try {
+            db.execSQL("DELETE FROM extinguisher_images WHERE extinguisher_id IN (" +
+                    "SELECT id FROM extinguishers WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?)", args);
+            db.delete("extinguishers", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+            db.delete("customers", "name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+            db.delete("safety_certificates", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+            db.delete("technical_reports", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+            db.delete("maintenance_contracts", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+            db.delete("customer_attachments", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
     }
 
     public Cursor all(String table) {
@@ -239,6 +292,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         insertDefaultSetting(db, "team_code", "");
         insertDefaultSetting(db, "selected_whatsapp_template", "0");
         insertDefaultSetting(db, "whatsapp_templates", defaultWhatsappTemplates());
+    }
+
+    private void createTeamAssignments(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS team_assignments (" +
+                "assignment_id TEXT PRIMARY KEY, team_code TEXT NOT NULL, customer_name TEXT NOT NULL, " +
+                "phone TEXT, place_name TEXT, location TEXT, status TEXT DEFAULT 'open', created_at INTEGER NOT NULL)");
     }
 
     private void insertDefaultSetting(SQLiteDatabase db, String key, String value) {
@@ -405,6 +464,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     }
 
     public void importTeamJson(JSONObject root) throws Exception {
+        importTeamJsonInternal(root, true);
+    }
+
+    public void importTeamCompletedJson(JSONObject root) throws Exception {
+        importTeamJsonInternal(root, false);
+    }
+
+    private void importTeamJsonInternal(JSONObject root, boolean skipExisting) throws Exception {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -414,7 +481,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 JSONArray rows = root.getJSONArray(table);
                 for (int i = 0; i < rows.length(); i++) {
                     JSONObject row = rows.getJSONObject(i);
-                    if (teamRowExists(db, table, row)) continue;
+                    if (skipExisting && teamRowExists(db, table, row)) continue;
                     if ("extinguishers".equals(table)) {
                         long oldId = row.optLong("id", -1);
                         ContentValues cv = rowValues(row, "id", "customer_id");

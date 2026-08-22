@@ -20,6 +20,7 @@ import com.google.firebase.auth.AuthCredential;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.GoogleAuthProvider;
+import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.SetOptions;
@@ -40,6 +41,7 @@ public class SyncManager {
     public static final int RC_SIGN_IN = 4041;
     private static final String IMAGE_UPLOAD_URL = "https://smmnoon.com/fire/upload.php";
     private static final String IMAGE_UPLOAD_TOKEN = "FireManager_smmnoon_2026_7391";
+    private static final String DEFAULT_SUPERVISOR_EMAIL = "mohamede669@gmail.com";
     private final Context context;
     private final DatabaseHelper db;
     private final FirebaseAuth auth;
@@ -212,6 +214,171 @@ public class SyncManager {
                     Toast.makeText(context, "فشل استرجاع بيانات الفريق: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     if (onDone != null) onDone.run();
                 });
+    }
+
+    public void assignCustomerToTeam(String teamCode, JSONObject snapshot, String customerName, String phone,
+                                     String place, String location, Runnable onDone) {
+        FirebaseUser u = user();
+        String code = cleanTeamCode(teamCode);
+        if (u == null) {
+            Toast.makeText(context, "سجل دخول جوجل الأول", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        if (code.length() == 0) {
+            Toast.makeText(context, "اكتب كود الفريق الأول", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        try {
+            DocumentReference ref = firestore.collection("fire_manager_assignments").document(code)
+                    .collection("items").document();
+            Map<String, Object> data = new HashMap<>();
+            data.put("assignment_id", ref.getId());
+            data.put("type", "customer");
+            data.put("status", "open");
+            data.put("team_code", code);
+            data.put("customer_name", customerName);
+            data.put("phone", phone);
+            data.put("place_name", place);
+            data.put("location", location);
+            data.put("snapshot", snapshot.toString());
+            data.put("assigned_by_email", u.getEmail());
+            data.put("supervisor_email", DEFAULT_SUPERVISOR_EMAIL);
+            data.put("created_at", System.currentTimeMillis());
+            ref.set(data)
+                    .addOnSuccessListener(v -> {
+                        Toast.makeText(context, "تم تحويل العميل للفريق", Toast.LENGTH_SHORT).show();
+                        if (onDone != null) onDone.run();
+                    })
+                    .addOnFailureListener(e -> {
+                        Toast.makeText(context, "فشل تحويل العميل: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        if (onDone != null) onDone.run();
+                    });
+        } catch (Exception e) {
+            Toast.makeText(context, "فشل تجهيز تحويل العميل: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            if (onDone != null) onDone.run();
+        }
+    }
+
+    public void restoreAssignments(String teamCode, Runnable onDone) {
+        FirebaseUser u = user();
+        String code = cleanTeamCode(teamCode);
+        if (u == null) {
+            Toast.makeText(context, "سجل دخول جوجل الأول", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        if (code.length() == 0) {
+            Toast.makeText(context, "اكتب كود الفريق الأول", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        firestore.collection("fire_manager_assignments").document(code).collection("items")
+                .whereEqualTo("status", "open").get()
+                .addOnSuccessListener(query -> {
+                    int imported = 0;
+                    try {
+                        for (DocumentSnapshot doc : query.getDocuments()) {
+                            String snapshot = doc.getString("snapshot");
+                            if (snapshot == null) continue;
+                            JSONObject root = new JSONObject(snapshot);
+                            db.importTeamJson(root);
+                            db.saveTeamAssignment(doc.getId(), code,
+                                    doc.getString("customer_name"),
+                                    doc.getString("phone"),
+                                    doc.getString("place_name"),
+                                    doc.getString("location"));
+                            imported++;
+                        }
+                        ReminderScheduler.scheduleAll(context, db);
+                        Toast.makeText(context, imported == 0 ? "لا توجد تكليفات مفتوحة" : "تم استلام " + imported + " تكليف", Toast.LENGTH_LONG).show();
+                    } catch (Exception e) {
+                        Toast.makeText(context, "فشل استلام التكليفات: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                    if (onDone != null) onDone.run();
+                })
+                .addOnFailureListener(e -> {
+                    Toast.makeText(context, "فشل استلام التكليفات: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    if (onDone != null) onDone.run();
+                });
+    }
+
+    public void completeAssignment(String teamCode, String assignmentId, JSONObject completedSnapshot, Runnable onDone) {
+        FirebaseUser u = user();
+        String code = cleanTeamCode(teamCode);
+        if (u == null || code.length() == 0 || assignmentId == null || assignmentId.length() == 0) {
+            Toast.makeText(context, "بيانات التكليف غير مكتملة", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        try {
+            Map<String, Object> data = new HashMap<>();
+            data.put("status", "completed");
+            data.put("completed_snapshot", completedSnapshot.toString());
+            data.put("completed_by_email", u.getEmail());
+            data.put("completed_at", System.currentTimeMillis());
+            firestore.collection("fire_manager_assignments").document(code)
+                    .collection("items").document(assignmentId)
+                    .set(data, SetOptions.merge())
+                    .addOnSuccessListener(v -> {
+                        db.closeTeamAssignment(assignmentId);
+                        Toast.makeText(context, "تم إرسال التحديث للمشرف", Toast.LENGTH_SHORT).show();
+                        if (onDone != null) onDone.run();
+                    })
+                    .addOnFailureListener(e -> {
+                        Toast.makeText(context, "فشل إرسال التحديث: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        if (onDone != null) onDone.run();
+                    });
+        } catch (Exception e) {
+            Toast.makeText(context, "فشل تجهيز التحديث: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            if (onDone != null) onDone.run();
+        }
+    }
+
+    public void restoreCompletedAssignments(String teamCode, Runnable onDone) {
+        FirebaseUser u = user();
+        String code = cleanTeamCode(teamCode);
+        if (u == null) {
+            Toast.makeText(context, "سجل دخول جوجل الأول", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        if (code.length() == 0) {
+            Toast.makeText(context, "اكتب كود الفريق الأول", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+            return;
+        }
+        firestore.collection("fire_manager_assignments").document(code).collection("items")
+                .whereEqualTo("status", "completed").get()
+                .addOnSuccessListener(query -> {
+                    int imported = 0;
+                    try {
+                        for (DocumentSnapshot doc : query.getDocuments()) {
+                            String snapshot = doc.getString("completed_snapshot");
+                            if (snapshot == null) continue;
+                            db.importTeamCompletedJson(new JSONObject(snapshot));
+                            doc.getReference().set(reviewedMarker(), SetOptions.merge());
+                            imported++;
+                        }
+                        ReminderScheduler.scheduleAll(context, db);
+                        Toast.makeText(context, imported == 0 ? "لا توجد تحديثات منتهية" : "تم استلام " + imported + " تحديث من الفريق", Toast.LENGTH_LONG).show();
+                    } catch (Exception e) {
+                        Toast.makeText(context, "فشل استلام تحديثات الفريق: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                    if (onDone != null) onDone.run();
+                })
+                .addOnFailureListener(e -> {
+                    Toast.makeText(context, "فشل استلام تحديثات الفريق: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    if (onDone != null) onDone.run();
+                });
+    }
+
+    private Map<String, Object> reviewedMarker() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("status", "supervisor_received");
+        data.put("supervisor_received_at", System.currentTimeMillis());
+        return data;
     }
 
     public void autoUploadQuietly() {

@@ -45,6 +45,9 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.pdf.PdfDocument;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
@@ -652,7 +655,56 @@ public class MainActivity extends Activity {
         });
         secondaryButton("تعديل بيانات العميل", () -> showCustomerEditPage(name, phone, place, location));
         secondaryButton("تغيير الحالة", () -> showCustomerStatusPage(name, phone, place, location, status));
+        secondaryButton("تحويل للفريق", () -> showAssignCustomerToTeam(name, phone, place, location, status, extinguisherCount, totalPrice));
+        String assignmentId = db.teamAssignmentValue(name, phone, place, location, "assignment_id");
+        String assignmentTeam = db.teamAssignmentValue(name, phone, place, location, "team_code");
+        if (!assignmentId.isEmpty()) {
+            secondaryButton("إنهاء وإرسال للمشرف", () -> finishTeamAssignment(assignmentTeam, assignmentId, name, phone, place, location));
+        }
         secondaryButton("رجوع للعملاء", this::showCustomers);
+    }
+
+    private void showAssignCustomerToTeam(String name, String phone, String place, String location, String status,
+                                          int extinguisherCount, double totalPrice) {
+        currentTab = "assign_customer";
+        clear();
+        section("تحويل العميل للفريق");
+        card(name,
+                "رقم: " + safe(phone) +
+                        "\nالحالة: " + safe(status.isEmpty() ? "جديد" : status) +
+                        "\nالطفايات: " + displayCount(extinguisherCount) +
+                        "\nالإجمالي: " + money(totalPrice));
+        EditText teamCode = input("كود الفريق الذي سيستلم العميل", InputType.TYPE_CLASS_TEXT);
+        teamCode.setText(db.setting("last_assign_team_code", db.setting("team_code", "")));
+        small("الفريق الذي يستخدم هذا الكود سيستلم هذا العميل فقط عند الضغط على استلام التكليفات.");
+        button("تحويل العميل الآن", () -> {
+            if (empty(teamCode)) return;
+            try {
+                db.setSetting("last_assign_team_code", txt(teamCode).trim().replace("/", "_"));
+                sync.assignCustomerToTeam(txt(teamCode), customerSnapshot(name, phone, place, location), name, phone, place, location,
+                        () -> showCustomerQuickActions(name, phone, place, location, status, extinguisherCount, totalPrice));
+            } catch (Exception e) {
+                toast("فشل تجهيز بيانات العميل: " + e.getMessage());
+            }
+        });
+        secondaryButton("رجوع", () -> showCustomerQuickActions(name, phone, place, location, status, extinguisherCount, totalPrice));
+    }
+
+    private void finishTeamAssignment(String teamCode, String assignmentId, String name, String phone, String place, String location) {
+        try {
+            sync.upload(() -> {
+                try {
+                    sync.completeAssignment(teamCode, assignmentId, customerSnapshot(name, phone, place, location), () -> {
+                        db.deleteCustomerEverywhere(name, phone, place, location);
+                        showCustomers();
+                    });
+                } catch (Exception e) {
+                    toast("فشل تجهيز تحديث المشرف: " + e.getMessage());
+                }
+            });
+        } catch (Exception e) {
+            toast("فشل إرسال التحديث: " + e.getMessage());
+        }
     }
 
     private void showCustomerDetails(String oldName, String oldPhone, String oldPlace, String oldLocation, String currentStatus,
@@ -839,6 +891,43 @@ public class MainActivity extends Activity {
 
     private String[] customerArgs(String name, String phone, String place, String location) {
         return new String[]{name, emptyForDb(phone), emptyForDb(place), emptyForDb(location)};
+    }
+
+    private JSONObject customerSnapshot(String name, String phone, String place, String location) throws Exception {
+        String[] args = customerArgs(name, phone, place, location);
+        JSONObject root = new JSONObject();
+        addRows(root, "customers", "SELECT * FROM customers WHERE name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+        addRows(root, "extinguishers", "SELECT * FROM extinguishers WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+        addRows(root, "safety_certificates", "SELECT * FROM safety_certificates WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+        addRows(root, "technical_reports", "SELECT * FROM technical_reports WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+        addRows(root, "maintenance_contracts", "SELECT * FROM maintenance_contracts WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+        addRows(root, "customer_attachments", "SELECT * FROM customer_attachments WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+        addRows(root, "extinguisher_images", "SELECT * FROM extinguisher_images WHERE extinguisher_id IN (" +
+                "SELECT id FROM extinguishers WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?)", args);
+        root.put("exported_at", System.currentTimeMillis());
+        return root;
+    }
+
+    private void addRows(JSONObject root, String key, String sql, String... args) throws Exception {
+        JSONArray rows = new JSONArray();
+        Cursor c = db.raw(sql, args);
+        try {
+            while (c.moveToNext()) {
+                JSONObject row = new JSONObject();
+                for (int i = 0; i < c.getColumnCount(); i++) {
+                    int type = c.getType(i);
+                    String name = c.getColumnName(i);
+                    if (type == Cursor.FIELD_TYPE_NULL) row.put(name, JSONObject.NULL);
+                    else if (type == Cursor.FIELD_TYPE_INTEGER) row.put(name, c.getLong(i));
+                    else if (type == Cursor.FIELD_TYPE_FLOAT) row.put(name, c.getDouble(i));
+                    else row.put(name, c.getString(i));
+                }
+                rows.put(row);
+            }
+        } finally {
+            c.close();
+        }
+        root.put(key, rows);
     }
 
     private void showExtinguisherEdit(long id) {
@@ -1265,6 +1354,14 @@ public class MainActivity extends Activity {
             button("استرجاع بيانات الفريق", () -> {
                 db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
                 sync.restoreTeam(txt(teamCode), this::showSync);
+            });
+            button("استلام التكليفات المرسلة للكود", () -> {
+                db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
+                sync.restoreAssignments(txt(teamCode), this::showCustomers);
+            });
+            button("استلام تحديثات الفريق المنتهية", () -> {
+                db.setSetting("team_code", txt(teamCode).trim().replace("/", "_"));
+                sync.restoreCompletedAssignments(txt(teamCode), this::showCustomers);
             });
         } else {
             small("بعد تسجيل الدخول بحساب Google هتظهر أزرار رفع واسترجاع بيانات الفريق.");
