@@ -83,6 +83,7 @@ public class MainActivity extends Activity {
     private SyncManager sync;
     private boolean appUpdateChecked;
     private boolean appVersionPublished;
+    private boolean assignmentsAutoPulled;
     private LinearLayout content;
     private TextView syncBadge;
     private EditText voiceTarget;
@@ -321,6 +322,15 @@ public class MainActivity extends Activity {
             appUpdateChecked = true;
             sync.checkRequiredUpdate(appVersionCode(), this::showRequiredUpdate);
         }
+        autoPullAssignmentsIfNeeded();
+    }
+
+    private void autoPullAssignmentsIfNeeded() {
+        if (!isTechnicianUser() || assignmentsAutoPulled) return;
+        String teamCode = db.setting("team_code", "").trim();
+        if (teamCode.isEmpty()) return;
+        assignmentsAutoPulled = true;
+        sync.restoreAssignments(teamCode, null);
     }
 
     private int appVersionCode() {
@@ -731,8 +741,12 @@ public class MainActivity extends Activity {
                         "\nالطفايات: " + displayCount(extinguisherCount) +
                         "\nالإجمالي: " + money(totalPrice));
         button("فتح ملف العميل", () -> showCustomerDetails(name, phone, place, location, status, extinguisherCount, totalPrice));
-        secondaryButton("رسالة واتساب", () -> sendWhatsApp(phone, name, extinguisherCount));
-        secondaryButton("مشاركة تقرير واتساب", () -> shareCustomerReportWhatsApp(phone, name, place, location, status, extinguisherCount, totalPrice));
+        if (isTechnicianUser()) {
+            secondaryButton("تواصل واتساب", () -> openWhatsAppChat(phone));
+        } else {
+            secondaryButton("رسالة واتساب", () -> sendWhatsApp(phone, name, extinguisherCount));
+            secondaryButton("مشاركة تقرير واتساب", () -> shareCustomerReportWhatsApp(phone, name, place, location, status, extinguisherCount, totalPrice));
+        }
         secondaryButton("فتح اللوكيشن", () -> {
             if (emptyForDb(location).isEmpty()) toast("لا يوجد لوكيشن مسجل");
             else openLocation(location);
@@ -811,8 +825,16 @@ public class MainActivity extends Activity {
                         "\nالحالة: " + safe(currentStatus.isEmpty() ? "جديد" : currentStatus) +
                         "\nإجمالي الطفايات: " + displayCount(extinguisherCount) +
                         "\nإجمالي المبلغ: " + money(totalPrice));
-        secondaryButton("رسالة واتساب جاهزة", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
-        secondaryButton("مشاركة تقرير العميل واتساب", () -> shareCustomerReportWhatsApp(oldPhone, oldName, oldPlace, oldLocation, currentStatus, extinguisherCount, totalPrice));
+        if (isTechnicianUser()) {
+            secondaryButton("تواصل واتساب", () -> openWhatsAppChat(oldPhone));
+        } else {
+            secondaryButton("رسالة واتساب جاهزة", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
+            secondaryButton("مشاركة تقرير العميل واتساب", () -> shareCustomerReportWhatsApp(oldPhone, oldName, oldPlace, oldLocation, currentStatus, extinguisherCount, totalPrice));
+        }
+        secondaryButton("فتح اللوكيشن", () -> {
+            if (emptyForDb(oldLocation).isEmpty()) toast("لا يوجد لوكيشن مسجل");
+            else openLocation(oldLocation);
+        });
         secondaryButton("تعديل بيانات العميل", () -> showCustomerEditPage(oldName, oldPhone, oldPlace, oldLocation));
         secondaryButton("تغيير حالة العميل", () -> showCustomerStatusPage(oldName, oldPhone, oldPlace, oldLocation, currentStatus));
         secondaryButton("إضافة صورة/مرفق", () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
@@ -2174,6 +2196,19 @@ public class MainActivity extends Activity {
         Uri uri = Uri.parse("https://wa.me/" + normalizedPhone + "?text=" + Uri.encode(message));
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, uri));
+        } catch (Exception e) {
+            toast("تعذر فتح واتساب");
+        }
+    }
+
+    private void openWhatsAppChat(String phone) {
+        String normalizedPhone = normalizePhone(phone);
+        if (normalizedPhone.isEmpty()) {
+            toast("رقم العميل غير مسجل");
+            return;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/" + normalizedPhone)));
         } catch (Exception e) {
             toast("تعذر فتح واتساب");
         }

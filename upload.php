@@ -51,6 +51,49 @@ function base_url(): string
     return $scheme . '://' . $host . $scriptDir;
 }
 
+function stamp_image(string $path, string $mime): void
+{
+    if (!extension_loaded('gd')) {
+        return;
+    }
+
+    if ($mime === 'image/jpeg') {
+        $image = @imagecreatefromjpeg($path);
+    } elseif ($mime === 'image/png') {
+        $image = @imagecreatefrompng($path);
+    } elseif ($mime === 'image/webp' && function_exists('imagecreatefromwebp')) {
+        $image = @imagecreatefromwebp($path);
+    } else {
+        return;
+    }
+
+    if (!$image) return;
+
+    $text = date('Y-m-d H:i:s');
+    $width = imagesx($image);
+    $height = imagesy($image);
+    $font = 5;
+    $textWidth = imagefontwidth($font) * strlen($text);
+    $textHeight = imagefontheight($font);
+    $padding = 10;
+    $x = max($padding, $width - $textWidth - ($padding * 2));
+    $y = max($padding, $height - $textHeight - ($padding * 2));
+    $bg = imagecolorallocatealpha($image, 0, 0, 0, 45);
+    $fg = imagecolorallocate($image, 255, 255, 255);
+
+    imagefilledrectangle($image, $x - $padding, $y - $padding, $x + $textWidth + $padding, $y + $textHeight + $padding, $bg);
+    imagestring($image, $font, $x, $y, $text, $fg);
+
+    if ($mime === 'image/jpeg') {
+        imagejpeg($image, $path, 90);
+    } elseif ($mime === 'image/png') {
+        imagepng($image, $path, 6);
+    } elseif ($mime === 'image/webp' && function_exists('imagewebp')) {
+        imagewebp($image, $path, 90);
+    }
+    imagedestroy($image);
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     respond(405, ['ok' => false, 'error' => 'POST only']);
 }
@@ -101,6 +144,7 @@ if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
 }
 
 chmod($targetPath, 0644);
+stamp_image($targetPath, $mime);
 
 $url = base_url() . '/uploads/' . rawurlencode($fileName);
 respond(200, [
