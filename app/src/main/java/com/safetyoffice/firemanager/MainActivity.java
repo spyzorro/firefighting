@@ -271,14 +271,16 @@ public class MainActivity extends Activity {
         Button b = new Button(this);
         b.setText(text);
         b.setTextColor(BRAND_DARK);
-        b.setTextSize(12);
+        b.setTextSize(14);
         b.setAllCaps(false);
         b.setCompoundDrawablesWithIntrinsicBounds(0, iconRes, 0, 0);
-        b.setCompoundDrawablePadding(dp(3));
+        b.setCompoundDrawablePadding(dp(5));
+        b.setMinHeight(dp(68));
+        b.setPadding(dp(6), dp(6), dp(6), dp(6));
         b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(12)));
         b.setOnClickListener(listener);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(82), dp(60));
-        lp.setMargins(dp(4), dp(10), dp(4), dp(6));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(104), dp(74));
+        lp.setMargins(dp(5), dp(10), dp(5), dp(8));
         tabs.addView(b, lp);
     }
 
