@@ -1269,7 +1269,7 @@ public class MainActivity extends Activity {
         } else {
             small("بعد تسجيل الدخول بحساب Google هتظهر أزرار رفع واسترجاع بيانات الفريق.");
         }
-        small("لو تسجيل Google رفض، أضف SHA-1 الذي يظهر في GitHub Actions داخل Firebase ثم أعد البناء.");
+        small("لو تسجيل Google رفض برقم 10، أضف SHA-1 و SHA-256 من GitHub Actions داخل Firebase، ثم حمل google-services.json جديد وضعه في Secret.");
     }
 
     private void listAnnual(String table, String dateColumn, String label) {

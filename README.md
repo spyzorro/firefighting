@@ -92,14 +92,17 @@
 1. أنشئ Firebase Project جديد مستقل لهذا التطبيق.
 2. أضف Android app جديد بالـ package name:
    `com.safetyoffice.firemanager`
-3. أضف SHA-1 الذي يظهر في GitHub Actions من خطوة `Print debug SHA-1 for Firebase`.
-4. حمل ملف `google-services.json` من Firebase.
-5. في GitHub افتح Settings ثم Secrets and variables ثم Actions.
-6. أضف Secret باسم:
+3. شغل GitHub Actions مرة وخد SHA-1 و SHA-256 من خطوة `Print app signing SHA fingerprints for Firebase`.
+4. أضف SHA-1 و SHA-256 داخل Firebase لنفس Android app.
+5. حمل ملف `google-services.json` الجديد من Firebase بعد إضافة البصمات.
+6. في GitHub افتح Settings ثم Secrets and variables ثم Actions.
+7. أضف أو حدّث Secret باسم:
    `GOOGLE_SERVICES_JSON`
-7. ضع محتوى ملف `google-services.json` كاملا داخل هذا السر.
-8. فعّل Firestore Database من Firebase.
-9. في Firebase Firestore Rules استخدم قواعد مناسبة للتطبيق. يوجد ملف جاهز كبداية باسم `firebase-firestore.rules`.
+8. ضع محتوى ملف `google-services.json` كاملا داخل هذا السر.
+9. فعّل Firestore Database من Firebase.
+10. في Firebase Firestore Rules استخدم قواعد مناسبة للتطبيق. يوجد ملف جاهز كبداية باسم `firebase-firestore.rules`.
+
+لو ظهر خطأ تسجيل دخول Google رقم 10، فهذا غالبا يعني أن SHA-1/SHA-256 أو ملف `google-services.json` غير مطابقين للـ APK الحالي. أضف البصمتين، حمل الملف الجديد، حدّث Secret، ثم أعد بناء التطبيق.
 
 الـ Workflow يرفض أي ملف Firebase يحتوي على `masrofaty` حتى لا تختلط بيانات التطبيقين.
 

@@ -79,6 +79,12 @@ public class SyncManager {
                         Toast.makeText(context, "فشل تسجيل الدخول: " + e.getMessage(), Toast.LENGTH_LONG).show();
                         if (onDone != null) onDone.run();
                     });
+        } catch (ApiException e) {
+            String message = e.getStatusCode() == 10
+                    ? "فشل تسجيل Google رقم 10: أضف SHA-1 و SHA-256 لنفس توقيع APK داخل Firebase ثم حمل google-services.json الجديد"
+                    : "لم يتم تسجيل الدخول: " + e.getMessage();
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show();
+            if (onDone != null) onDone.run();
         } catch (Exception e) {
             Toast.makeText(context, "لم يتم تسجيل الدخول: " + e.getMessage(), Toast.LENGTH_LONG).show();
             if (onDone != null) onDone.run();
