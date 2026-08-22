@@ -179,6 +179,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
     }
 
+    public String teamAssignmentStatus(String assignmentId) {
+        Cursor c = getReadableDatabase().query("team_assignments", new String[]{"status"},
+                "assignment_id=?", new String[]{safe(assignmentId)}, null, null, null, "1");
+        try {
+            return c.moveToFirst() ? safe(c.getString(0)) : "";
+        } finally {
+            c.close();
+        }
+    }
+
     public String teamAssignmentValue(String name, String phone, String place, String location, String column) {
         Cursor c = getReadableDatabase().query("team_assignments", new String[]{column},
                 "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? AND status='open'",

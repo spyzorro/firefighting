@@ -305,11 +305,11 @@ public class MainActivity extends Activity {
                         "\nالشهادات: " + certificates +
                         "\nإجمالي مبالغ الطفايات: " + money(total) +
                         "\nإجمالي نسبتك هذا الشهر: " + money(shareTotal));
+        button("استلام من الفنيين", this::showTeamInbox);
         card("ملخص الشهر",
                 "نسبتك الإجمالية: " + money(shareTotal) +
                         "\nعدد شهادات السلامة: " + certificates);
         button("تسجيل عميل وطفايات بسرعة", this::showExtinguishers);
-        button("استلام من الفنيين", this::showTeamInbox);
         section("اختصارات");
         homeAction("العملاء", "بحث وتغيير حالة وواتساب", this::showCustomers);
         homeAction("تنبيهات", "المواعيد القريبة والمتأخرة", this::showAlerts);
@@ -1609,12 +1609,18 @@ public class MainActivity extends Activity {
         sync.fetchCompletedAssignments(code, new SyncManager.CompletedAssignmentsListener() {
             @Override
             public void onLoaded(List<SyncManager.CompletedAssignment> assignments) {
-                showTeamInboxResults(code, assignments);
+                runOnUiThread(() -> {
+                    try {
+                        showTeamInboxResults(code, assignments);
+                    } catch (Exception e) {
+                        toast("تعذر عرض قائمة الفنيين");
+                    }
+                });
             }
 
             @Override
             public void onError(String message) {
-                toast("فشل تحميل تحديثات الفنيين: " + safe(message));
+                runOnUiThread(() -> toast("فشل تحميل تحديثات الفنيين: " + safe(message)));
             }
         });
     }
@@ -2938,9 +2944,24 @@ public class MainActivity extends Activity {
     }
 
     private void styleStatusChoice(Button button, boolean selected) {
-        button.setTextColor(selected ? Color.WHITE : BRAND_DARK);
-        button.setBackground(rounded(selected ? ACCENT : Color.WHITE,
+        String status = emptyForDb(button.getText().toString()).replace(" ✓", "");
+        int fill = statusColor(status);
+        boolean colored = fill != Color.WHITE;
+        button.setTextColor(statusNeedsDarkText(status) ? BRAND_DARK : (colored || selected ? Color.WHITE : BRAND_DARK));
+        button.setBackground(rounded(colored ? fill : (selected ? ACCENT : Color.WHITE),
                 selected ? BRAND_DARK : Color.rgb(203, 213, 225), dp(16)));
+    }
+
+    private int statusColor(String status) {
+        if ("استلام الطفايات".equals(status)) return Color.rgb(37, 99, 235);
+        if ("تسليم جزئي".equals(status)) return Color.rgb(148, 163, 184);
+        if ("تسليم الطفايات".equals(status)) return Color.rgb(22, 163, 74);
+        if ("جاري الصيانة".equals(status)) return Color.rgb(250, 204, 21);
+        return Color.WHITE;
+    }
+
+    private boolean statusNeedsDarkText(String status) {
+        return "جاري الصيانة".equals(status) || "تسليم جزئي".equals(status);
     }
 
     private void quickImageBar() {

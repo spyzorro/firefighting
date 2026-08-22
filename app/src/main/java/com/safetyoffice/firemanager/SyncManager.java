@@ -363,11 +363,11 @@ public class SyncManager {
         String latestCustomer = "";
         try {
             for (DocumentSnapshot doc : query.getDocuments()) {
-                if (db.hasTeamAssignment(doc.getId())) continue;
+                String localStatus = db.teamAssignmentStatus(doc.getId());
+                if ("open".equals(localStatus)) continue;
                 String snapshot = doc.getString("snapshot");
                 if (snapshot == null) continue;
-                JSONObject root = new JSONObject(snapshot);
-                db.importTeamJson(root);
+                if (localStatus.length() == 0) db.importTeamJson(new JSONObject(snapshot));
                 db.saveTeamAssignment(doc.getId(), code,
                         doc.getString("customer_name"),
                         doc.getString("phone"),
@@ -464,19 +464,22 @@ public class SyncManager {
                 .addOnSuccessListener(query -> {
                     List<CompletedAssignment> result = new ArrayList<>();
                     for (DocumentSnapshot doc : query.getDocuments()) {
-                        result.add(new CompletedAssignment(
-                                code,
-                                doc.getId(),
-                                doc.getString("customer_name"),
-                                doc.getString("phone"),
-                                doc.getString("place_name"),
-                                doc.getString("location"),
-                                doc.getString("status"),
-                                doc.getString("snapshot"),
-                                doc.getString("completed_snapshot"),
-                                doc.getString("completed_by_email"),
-                                doc.getLong("completed_at") == null ? 0 : doc.getLong("completed_at")
-                        ));
+                        try {
+                            result.add(new CompletedAssignment(
+                                    code,
+                                    doc.getId(),
+                                    doc.getString("customer_name"),
+                                    doc.getString("phone"),
+                                    doc.getString("place_name"),
+                                    doc.getString("location"),
+                                    doc.getString("status"),
+                                    doc.getString("snapshot"),
+                                    doc.getString("completed_snapshot"),
+                                    doc.getString("completed_by_email"),
+                                    asLong(doc.get("completed_at"))
+                            ));
+                        } catch (Exception ignored) {
+                        }
                     }
                     if (listener != null) listener.onLoaded(result);
                 })
@@ -517,7 +520,11 @@ public class SyncManager {
             return;
         }
         Map<String, Object> data = new HashMap<>();
-        data.put("status", "supervisor_rejected");
+        data.put("status", "open");
+        if (item.completedSnapshot != null && item.completedSnapshot.length() > 0) {
+            data.put("snapshot", item.completedSnapshot);
+        }
+        data.put("last_rejected_snapshot", item.completedSnapshot);
         data.put("supervisor_rejected_at", System.currentTimeMillis());
         firestore.collection("fire_manager_assignments").document(item.teamCode)
                 .collection("items").document(item.assignmentId)
@@ -530,6 +537,15 @@ public class SyncManager {
                     Toast.makeText(context, "فشل رفض التحديث: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     if (onDone != null) onDone.run();
                 });
+    }
+
+    private long asLong(Object value) {
+        if (value instanceof Number) return ((Number) value).longValue();
+        try {
+            return value == null ? 0 : Long.parseLong(String.valueOf(value));
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private Map<String, Object> reviewedMarker() {
