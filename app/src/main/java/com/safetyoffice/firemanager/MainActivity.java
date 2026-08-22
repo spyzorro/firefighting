@@ -2,6 +2,7 @@ package com.safetyoffice.firemanager;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ContentProviderOperation;
 import android.content.ActivityNotFoundException;
@@ -77,6 +78,7 @@ public class MainActivity extends Activity {
     private DatabaseHelper db;
     private SyncManager sync;
     private LinearLayout content;
+    private TextView syncBadge;
     private EditText voiceTarget;
     private EditText[] voiceGroup;
     private SpeechRecognizer speechRecognizer;
@@ -196,6 +198,15 @@ public class MainActivity extends Activity {
         sub.setGravity(Gravity.RIGHT);
         sub.setTextSize(14);
         root.addView(sub, matchWrap());
+
+        syncBadge = new TextView(this);
+        syncBadge.setGravity(Gravity.RIGHT);
+        syncBadge.setTextSize(13);
+        syncBadge.setPadding(dp(10), dp(6), dp(10), dp(6));
+        refreshSyncBadge();
+        LinearLayout.LayoutParams syncLp = matchWrap();
+        syncLp.setMargins(0, dp(6), 0, dp(2));
+        root.addView(syncBadge, syncLp);
 
         HorizontalScrollView hsv = new HorizontalScrollView(this);
         hsv.setHorizontalScrollBarEnabled(false);
@@ -392,8 +403,12 @@ public class MainActivity extends Activity {
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
         EditText count = input("عدد الطفايات", InputType.TYPE_CLASS_NUMBER);
         EditText price = input("إجمالي مبلغ الطفايات", numberType());
+        EditText paid = input("المدفوع", numberType());
+        paid.setText("0");
         EditText type = input("نوع الطفاية", InputType.TYPE_CLASS_TEXT);
+        quickChoiceBar(type, "نوع الطفاية", extinguisherTypes());
         EditText weight = input("وزن الطفاية", InputType.TYPE_CLASS_TEXT);
+        quickChoiceBar(weight, "وزن الطفاية", extinguisherWeights());
         EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
         EditText customerStatus = hiddenInput("حالة العميل");
@@ -410,49 +425,13 @@ public class MainActivity extends Activity {
         voiceToFieldButton("سجل الكلام هنا", voiceDraft);
         secondaryButton("وزع النص على الخانات", () -> {
             if (empty(voiceDraft)) return;
-            fillVoiceGroup(txt(voiceDraft), new EditText[]{customer, phone, count, price, type, weight, place, location, date});
+            fillVoiceGroup(txt(voiceDraft), new EditText[]{customer, phone, count, price, paid, type, weight, place, location, date});
         });
         small("مثال: محمد 20 طفاية بودرة CO2 120 ريال. بعد كده اضغط موقعي لو عاوز اللوكيشن الحالي.");
-        button("حفظ العميل والطفايات", () -> {
+        button("مراجعة قبل الحفظ", () -> reviewQuickExtinguisher(customer, phone, count, price, paid, type, weight, place, location, customerStatus, deliveredAgain, date));
+        secondaryButton("حفظ مباشر بدون مراجعة", () -> {
             if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
-            try {
-                long stickerDate = ReminderScheduler.parseDate(txt(date));
-                long reminder = ReminderScheduler.stickerReminder(stickerDate);
-                String status = txt(customerStatus).isEmpty() ? "جاري الصيانة" : txt(customerStatus);
-
-                ContentValues ccv = new ContentValues();
-                ccv.put("name", txt(customer));
-                ccv.put("phone", txt(phone));
-                ccv.put("place_name", txt(place));
-                ccv.put("location", txt(location));
-                ccv.put("customer_status", status);
-                ccv.put("created_at", System.currentTimeMillis());
-                long customerId = db.insert("customers", ccv);
-
-                ContentValues cv = new ContentValues();
-                cv.put("customer_id", customerId);
-                cv.put("customer_name", txt(customer));
-                cv.put("phone", txt(phone));
-                cv.put("place_name", txt(place));
-                cv.put("location", txt(location));
-                cv.put("customer_status", status);
-                cv.put("extinguisher_type", txt(type));
-                cv.put("weight", txt(weight));
-                cv.put("count", integer(count));
-                cv.put("total_price", dbl(price));
-                cv.put("sticker_date", stickerDate);
-                cv.put("reminder_at", reminder);
-                cv.put("image_uri", pendingExtinguisherImageUri);
-                cv.put("delivered_again", yesNo(txt(deliveredAgain)) ? 1 : 0);
-                cv.put("created_at", System.currentTimeMillis());
-                long extinguisherId = db.insert("extinguishers", cv);
-                saveExtinguisherImages(extinguisherId, pendingExtinguisherImageUris);
-                saveContactIfEnabled(txt(customer), txt(phone));
-                afterSave("تم حفظ الطفايات والتنبيه يوم " + ReminderScheduler.formatDate(reminder));
-                showExtinguishers();
-            } catch (Exception ex) {
-                toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
-            }
+            saveQuickExtinguisher(customer, phone, count, price, paid, type, weight, place, location, customerStatus, deliveredAgain, date, false);
         });
         secondaryButton("عرض آخر عمليات الطفايات", this::showRecentExtinguishers);
     }
@@ -471,18 +450,125 @@ public class MainActivity extends Activity {
                                 "\nنوع: " + val(c, "extinguisher_type") +
                                 "\nوزن: " + val(c, "weight") +
                                 "\nمبلغ: " + money(c.getDouble(c.getColumnIndexOrThrow("total_price"))) +
+                                "\nمدفوع: " + money(c.getDouble(c.getColumnIndexOrThrow("paid_amount"))) +
+                                "\nمتبقي: " + money(Math.max(0, c.getDouble(c.getColumnIndexOrThrow("total_price")) - c.getDouble(c.getColumnIndexOrThrow("paid_amount")))) +
                                 "\nاستلم تاني: " + yesNoLabel(c.getInt(c.getColumnIndexOrThrow("delivered_again"))) +
                                 "\nالتذكير: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("reminder_at"))) +
                                 "\nرقم: " + val(c, "phone") +
                                 "\nاسم المكان: " + val(c, "place_name") +
                                 "\nلوكيشن: " + val(c, "location"));
                 String image = rawVal(c, "image_uri");
-                listExtinguisherImages(id, image);
+                listExtinguisherImages(id, image, null);
             }
         } finally {
             c.close();
         }
         secondaryButton("رجوع للتسجيل السريع", this::showExtinguishers);
+    }
+
+    private void reviewQuickExtinguisher(EditText customer, EditText phone, EditText count, EditText price, EditText paid,
+                                         EditText type, EditText weight, EditText place, EditText location,
+                                         EditText customerStatus, EditText deliveredAgain, EditText date) {
+        if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
+        try {
+            ReminderScheduler.parseDate(txt(date));
+            String status = txt(customerStatus).isEmpty() ? "جاري الصيانة" : txt(customerStatus);
+            double remaining = Math.max(0, dbl(price) - dbl(paid));
+            String summary = txt(customer) +
+                    "\nرقم: " + txt(phone) +
+                    "\nعدد الطفايات: " + txt(count) +
+                    "\nالنوع: " + txt(type) +
+                    "\nالوزن: " + txt(weight) +
+                    "\nالإجمالي: " + money(dbl(price)) +
+                    "\nالمدفوع: " + money(dbl(paid)) +
+                    "\nالمتبقي: " + money(remaining) +
+                    "\nالحالة: " + status +
+                    "\nاسم المكان: " + txt(place) +
+                    "\nالتاريخ: " + txt(date);
+            new AlertDialog.Builder(this)
+                    .setTitle("مراجعة قبل الحفظ")
+                    .setMessage(summary)
+                    .setPositiveButton("تأكيد الحفظ", (dialog, which) ->
+                            saveQuickExtinguisher(customer, phone, count, price, paid, type, weight, place, location, customerStatus, deliveredAgain, date, false))
+                    .setNegativeButton("رجوع للتعديل", null)
+                    .show();
+        } catch (Exception ex) {
+            toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
+        }
+    }
+
+    private void saveQuickExtinguisher(EditText customer, EditText phone, EditText count, EditText price, EditText paid,
+                                       EditText type, EditText weight, EditText place, EditText location,
+                                       EditText customerStatus, EditText deliveredAgain, EditText date,
+                                       boolean duplicateConfirmed) {
+        if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
+        if (!duplicateConfirmed && !txt(phone).isEmpty() && customerExistsByPhone(txt(phone))) {
+            new AlertDialog.Builder(this)
+                    .setTitle("العميل موجود")
+                    .setMessage("الرقم ده متسجل قبل كده. تحب تضيف العملية الجديدة على نفس العميل؟")
+                    .setPositiveButton("أضف العملية", (dialog, which) ->
+                            saveQuickExtinguisher(customer, phone, count, price, paid, type, weight, place, location, customerStatus, deliveredAgain, date, true))
+                    .setNegativeButton("رجوع للتعديل", null)
+                    .show();
+            return;
+        }
+        try {
+            long stickerDate = ReminderScheduler.parseDate(txt(date));
+            long reminder = ReminderScheduler.stickerReminder(stickerDate);
+            String status = txt(customerStatus).isEmpty() ? "جاري الصيانة" : txt(customerStatus);
+
+            ContentValues ccv = new ContentValues();
+            ccv.put("name", txt(customer));
+            ccv.put("phone", txt(phone));
+            ccv.put("place_name", txt(place));
+            ccv.put("location", txt(location));
+            ccv.put("customer_status", status);
+            ccv.put("created_at", System.currentTimeMillis());
+            long customerId = db.insert("customers", ccv);
+
+            ContentValues cv = new ContentValues();
+            cv.put("customer_id", customerId);
+            cv.put("customer_name", txt(customer));
+            cv.put("phone", txt(phone));
+            cv.put("place_name", txt(place));
+            cv.put("location", txt(location));
+            cv.put("customer_status", status);
+            cv.put("extinguisher_type", txt(type));
+            cv.put("weight", txt(weight));
+            cv.put("count", integer(count));
+            cv.put("total_price", dbl(price));
+            cv.put("paid_amount", dbl(paid));
+            cv.put("sticker_date", stickerDate);
+            cv.put("reminder_at", reminder);
+            cv.put("image_uri", pendingExtinguisherImageUri);
+            cv.put("delivered_again", yesNo(txt(deliveredAgain)) ? 1 : 0);
+            cv.put("created_at", System.currentTimeMillis());
+            long extinguisherId = db.insert("extinguishers", cv);
+            saveExtinguisherImages(extinguisherId, pendingExtinguisherImageUris);
+            saveContactIfEnabled(txt(customer), txt(phone));
+            afterSave("تم حفظ الطفايات والتنبيه يوم " + ReminderScheduler.formatDate(reminder));
+            showExtinguishers();
+        } catch (Exception ex) {
+            toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
+        }
+    }
+
+    private boolean customerExistsByPhone(String phone) {
+        String normalized = normalizePhone(phone);
+        if (normalized.isEmpty()) return false;
+        Cursor c = db.raw("SELECT phone FROM (" +
+                        "SELECT phone FROM customers UNION ALL SELECT phone FROM extinguishers " +
+                        "UNION ALL SELECT phone FROM safety_certificates UNION ALL SELECT phone FROM technical_reports " +
+                        "UNION ALL SELECT phone FROM maintenance_contracts) WHERE IFNULL(phone,'')<>''",
+                new String[]{});
+        try {
+            while (c.moveToNext()) {
+                if (normalized.equals(normalizePhone(c.getString(0)))) return true;
+            }
+            return false;
+        } finally {
+            c.close();
+        }
     }
 
     private void showCustomers() {
@@ -540,13 +626,33 @@ public class MainActivity extends Activity {
                                 "\nالحالة: " + safe(status.isEmpty() ? "جديد" : status) +
                                 "\nإجمالي الطفايات: " + displayCount(extinguisherCount) +
                                 "\nإجمالي المبلغ: " + money(totalPrice));
-                secondaryButton("فتح ملف العميل", () -> showCustomerDetails(oldName, oldPhone, oldPlace, oldLocation, status, extinguisherCount, totalPrice));
-                secondaryButton("تغيير الحالة", () -> showCustomerStatusPage(oldName, oldPhone, oldPlace, oldLocation, status));
-                secondaryButton("رسالة واتساب للعميل", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
+                secondaryButton("إجراء سريع", () -> showCustomerQuickActions(oldName, oldPhone, oldPlace, oldLocation, status, extinguisherCount, totalPrice));
             }
         } finally {
             c.close();
         }
+    }
+
+    private void showCustomerQuickActions(String name, String phone, String place, String location, String status,
+                                          int extinguisherCount, double totalPrice) {
+        currentTab = "customer_actions";
+        clear();
+        section("إجراء سريع");
+        card(name,
+                "رقم: " + safe(phone) +
+                        "\nالحالة: " + safe(status.isEmpty() ? "جديد" : status) +
+                        "\nالطفايات: " + displayCount(extinguisherCount) +
+                        "\nالإجمالي: " + money(totalPrice));
+        button("فتح ملف العميل", () -> showCustomerDetails(name, phone, place, location, status, extinguisherCount, totalPrice));
+        secondaryButton("رسالة واتساب", () -> sendWhatsApp(phone, name, extinguisherCount));
+        secondaryButton("مشاركة تقرير واتساب", () -> shareCustomerReportWhatsApp(phone, name, place, location, status, extinguisherCount, totalPrice));
+        secondaryButton("فتح اللوكيشن", () -> {
+            if (emptyForDb(location).isEmpty()) toast("لا يوجد لوكيشن مسجل");
+            else openLocation(location);
+        });
+        secondaryButton("تعديل بيانات العميل", () -> showCustomerEditPage(name, phone, place, location));
+        secondaryButton("تغيير الحالة", () -> showCustomerStatusPage(name, phone, place, location, status));
+        secondaryButton("رجوع للعملاء", this::showCustomers);
     }
 
     private void showCustomerDetails(String oldName, String oldPhone, String oldPlace, String oldLocation, String currentStatus,
@@ -676,7 +782,7 @@ public class MainActivity extends Activity {
 
     private void listCustomerRecords(String name, String phone, String place, String location) {
         String[] args = customerArgs(name, phone, place, location);
-        Cursor e = db.raw("SELECT id, extinguisher_type, weight, count, total_price, sticker_date, reminder_at, image_uri, delivered_again FROM extinguishers " +
+        Cursor e = db.raw("SELECT id, extinguisher_type, weight, count, total_price, sticker_date, reminder_at, image_uri, delivered_again, IFNULL(paid_amount,0) FROM extinguishers " +
                 "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
         try {
             while (e.moveToNext()) {
@@ -686,11 +792,13 @@ public class MainActivity extends Activity {
                                 "\nالوزن: " + safe(e.getString(2)) +
                                 "\nالعدد: " + e.getInt(3) +
                                 "\nالمبلغ: " + money(e.getDouble(4)) +
+                                "\nالمدفوع: " + money(e.getDouble(9)) +
+                                "\nالمتبقي: " + money(Math.max(0, e.getDouble(4) - e.getDouble(9))) +
                                 "\nتاريخ الاستيكر: " + ReminderScheduler.formatDate(e.getLong(5)) +
                                 "\nالتذكير: " + ReminderScheduler.formatDate(e.getLong(6)) +
                                 "\nاستلم تاني: " + yesNoLabel(e.getInt(8)));
                 String image = emptyForDb(e.getString(7));
-                listExtinguisherImages(id, image);
+                listExtinguisherImages(id, image, () -> openCustomerDetails(name, phone, place, location));
                 secondaryButton("تعديل بيانات الطفايات", () -> showExtinguisherEdit(id));
             }
         } finally {
@@ -754,12 +862,16 @@ public class MainActivity extends Activity {
             location.setText(rawVal(c, "location"));
             EditText type = input("نوع الطفاية", InputType.TYPE_CLASS_TEXT);
             type.setText(rawVal(c, "extinguisher_type"));
+            quickChoiceBar(type, "نوع الطفاية", extinguisherTypes());
             EditText weight = input("وزن الطفاية", InputType.TYPE_CLASS_TEXT);
             weight.setText(rawVal(c, "weight"));
+            quickChoiceBar(weight, "وزن الطفاية", extinguisherWeights());
             EditText count = input("عدد الطفايات", InputType.TYPE_CLASS_NUMBER);
             count.setText(String.valueOf(c.getInt(c.getColumnIndexOrThrow("count"))));
             EditText price = input("إجمالي مبلغ الطفايات", numberType());
             price.setText(cleanNumber(c.getDouble(c.getColumnIndexOrThrow("total_price"))));
+            EditText paid = input("المدفوع", numberType());
+            paid.setText(cleanNumber(c.getDouble(c.getColumnIndexOrThrow("paid_amount"))));
             EditText deliveredAgain = input("استلم الطفايات تاني؟ نعم/لا", InputType.TYPE_CLASS_TEXT);
             deliveredAgain.setText(yesNoLabel(c.getInt(c.getColumnIndexOrThrow("delivered_again"))));
             pendingExtinguisherImageUri = rawVal(c, "image_uri");
@@ -768,7 +880,7 @@ public class MainActivity extends Activity {
             pendingCameraImageUri = null;
             secondaryButton("إضافة صور من المعرض", () -> chooseExtinguisherImage());
             secondaryButton("تصوير صورة جديدة بالكاميرا", () -> takeExtinguisherPhoto());
-            listExtinguisherImages(id, pendingExtinguisherImageUri);
+            listExtinguisherImages(id, pendingExtinguisherImageUri, () -> showExtinguisherEdit(id));
             EditText date = input("تاريخ الاستيكر yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
             date.setText(ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("sticker_date"))));
             button("حفظ وإغلاق تعديل الطفايات", () -> {
@@ -784,6 +896,7 @@ public class MainActivity extends Activity {
                     cv.put("weight", txt(weight));
                     cv.put("count", integer(count));
                     cv.put("total_price", dbl(price));
+                    cv.put("paid_amount", dbl(paid));
                     cv.put("sticker_date", stickerDate);
                     cv.put("reminder_at", ReminderScheduler.stickerReminder(stickerDate));
                     pendingExtinguisherImageUri = pendingExtinguisherImageUris.isEmpty() ? "" : pendingExtinguisherImageUris.get(0);
@@ -911,15 +1024,18 @@ public class MainActivity extends Activity {
         button("تصدير Excel الشهر", this::exportMonthlyExcel);
         button("تصدير تقرير الشهر PDF", this::exportMonthlyPdf);
         long[] range = monthRange();
-        Cursor c = db.raw("SELECT COALESCE(SUM(count),0), COALESCE(SUM(total_price),0) FROM extinguishers " +
+        Cursor c = db.raw("SELECT COALESCE(SUM(count),0), COALESCE(SUM(total_price),0), COALESCE(SUM(IFNULL(paid_amount,0)),0) FROM extinguishers " +
                 "WHERE created_at BETWEEN ? AND ?", String.valueOf(range[0]), String.valueOf(range[1]));
         try {
             if (c.moveToFirst()) {
                 int count = c.getInt(0);
                 double total = c.getDouble(1);
+                double paid = c.getDouble(2);
                 double pct = db.settingDouble("extinguisher_percent", 25);
                 card("عدد الطفايات هذا الشهر", count + " طفاية");
-                card("إجمالي مبلغ الطفايات", money(total));
+                card("إجمالي مبلغ الطفايات", money(total) +
+                        "\nالمدفوع: " + money(paid) +
+                        "\nالمتبقي: " + money(Math.max(0, total - paid)));
                 card("نسبتك في الطفايات " + cleanNumber(pct) + "%", money(total * pct / 100.0));
             }
         } finally {
@@ -1165,8 +1281,19 @@ public class MainActivity extends Activity {
     }
 
     private void clear() {
+        refreshSyncBadge();
         if (manualVoiceActive) cancelManualVoice();
         content.removeAllViews();
+    }
+
+    private void refreshSyncBadge() {
+        if (syncBadge == null || sync == null) return;
+        FirebaseUser user = sync.user();
+        boolean connected = user != null;
+        syncBadge.setText(connected ? "متزامن مع Google" : "في انتظار مزامنة Google");
+        syncBadge.setTextColor(connected ? Color.rgb(22, 101, 52) : Color.rgb(146, 64, 14));
+        syncBadge.setBackground(rounded(connected ? Color.rgb(220, 252, 231) : Color.rgb(255, 247, 237),
+                connected ? Color.rgb(134, 239, 172) : Color.rgb(253, 186, 116), dp(10)));
     }
 
     private void hero(String title, String body) {
@@ -1440,11 +1567,39 @@ public class MainActivity extends Activity {
         return images;
     }
 
-    private void listExtinguisherImages(long extinguisherId, String legacyImage) {
+    private void listExtinguisherImages(long extinguisherId, String legacyImage, Runnable refresh) {
         ArrayList<String> images = extinguisherImages(extinguisherId, legacyImage);
         for (int i = 0; i < images.size(); i++) {
             String uri = images.get(i);
-            secondaryButton("فتح صورة الطفاية " + (i + 1), () -> openAttachment(uri));
+            card("صورة الطفاية " + (i + 1), "معرض صور الطفايات");
+            secondaryButton("فتح الصورة", () -> openAttachment(uri));
+            secondaryButton("حذف الصورة", () -> confirmDeleteExtinguisherImage(extinguisherId, uri, refresh));
+        }
+    }
+
+    private void confirmDeleteExtinguisherImage(long extinguisherId, String uri, Runnable refresh) {
+        new AlertDialog.Builder(this)
+                .setTitle("حذف الصورة")
+                .setMessage("تحب تحذف الصورة دي من سجل الطفاية؟")
+                .setPositiveButton("حذف", (dialog, which) -> {
+                    db.delete("extinguisher_images", "extinguisher_id=? AND uri=?", String.valueOf(extinguisherId), uri);
+                    ContentValues cv = new ContentValues();
+                    cv.put("image_uri", firstExtinguisherImageUri(extinguisherId));
+                    db.update("extinguishers", cv, "id=?", String.valueOf(extinguisherId));
+                    afterSave("تم حذف الصورة");
+                    if (refresh != null) refresh.run();
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
+    private String firstExtinguisherImageUri(long extinguisherId) {
+        Cursor c = db.raw("SELECT uri FROM extinguisher_images WHERE extinguisher_id=? ORDER BY created_at DESC LIMIT 1",
+                String.valueOf(extinguisherId));
+        try {
+            return c.moveToFirst() ? emptyForDb(c.getString(0)) : "";
+        } finally {
+            c.close();
         }
     }
 
@@ -1567,9 +1722,9 @@ public class MainActivity extends Activity {
 
     private void appendExcelExtinguishers(StringBuilder html, long[] range) {
         appendExcelSimpleTable(html, "الطفايات",
-                new String[]{"العميل", "الرقم", "اسم المكان", "الحالة", "النوع", "الوزن", "العدد", "المبلغ", "تاريخ الاستيكر", "التذكير", "استلم تاني"},
-                "SELECT customer_name, phone, place_name, customer_status, extinguisher_type, weight, count, total_price, sticker_date, reminder_at, delivered_again FROM extinguishers WHERE created_at BETWEEN ? AND ? ORDER BY created_at DESC",
-                range, new int[]{8, 9}, new int[]{7});
+                new String[]{"العميل", "الرقم", "اسم المكان", "الحالة", "النوع", "الوزن", "العدد", "المبلغ", "المدفوع", "المتبقي", "تاريخ الاستيكر", "التذكير", "استلم تاني"},
+                "SELECT customer_name, phone, place_name, customer_status, extinguisher_type, weight, count, total_price, IFNULL(paid_amount,0), MAX(total_price-IFNULL(paid_amount,0),0), sticker_date, reminder_at, delivered_again FROM extinguishers WHERE created_at BETWEEN ? AND ? ORDER BY created_at DESC",
+                range, new int[]{10, 11}, new int[]{7, 8, 9});
     }
 
     private void appendExcelSimpleTable(StringBuilder html, String title, String[] headers, String sql,
@@ -1586,7 +1741,7 @@ public class MainActivity extends Activity {
                     String value;
                     if (containsIndex(dateColumns, i)) value = ReminderScheduler.formatDate(c.getLong(i));
                     else if (containsIndex(moneyColumns, i)) value = money(c.getDouble(i));
-                    else if (title.equals("الطفايات") && i == 10) value = yesNoLabel(c.getInt(i));
+                    else if (title.equals("الطفايات") && i == headers.length - 1) value = yesNoLabel(c.getInt(i));
                     else value = safe(c.getString(i));
                     html.append("<td>").append(htmlEscape(value)).append("</td>");
                 }
@@ -2057,6 +2212,39 @@ public class MainActivity extends Activity {
         }
         hsv.addView(row);
         content.addView(hsv, matchWrap());
+    }
+
+    private void quickChoiceBar(EditText target, String label, String[] choices) {
+        small(label + " - اختار بسرعة أو اكتب/استخدم الصوت");
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        hsv.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        for (String choice : choices) {
+            Button b = new Button(this);
+            b.setText(choice);
+            b.setTextColor(BRAND_DARK);
+            b.setTextSize(13);
+            b.setAllCaps(false);
+            b.setBackground(rounded(Color.WHITE, Color.rgb(203, 213, 225), dp(16)));
+            b.setOnClickListener(v -> {
+                target.setText(choice);
+                target.setSelection(target.getText().length());
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
+            lp.setMargins(dp(4), 0, dp(4), dp(6));
+            row.addView(b, lp);
+        }
+        hsv.addView(row);
+        content.addView(hsv, matchWrap());
+    }
+
+    private String[] extinguisherTypes() {
+        return new String[]{"بودرة", "CO2", "ماء", "رغوة", "كيميائي رطب", "بودرة بعجلات"};
+    }
+
+    private String[] extinguisherWeights() {
+        return new String[]{"1kg", "2kg", "4kg", "5kg", "6kg", "9kg", "10kg", "12kg", "25kg", "50kg"};
     }
 
     private void styleStatusChoice(Button button, boolean selected) {

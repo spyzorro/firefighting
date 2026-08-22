@@ -14,7 +14,7 @@ import java.util.List;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String DB_NAME = "fire_salary_manager.db";
-    public static final int DB_VERSION = 8;
+    public static final int DB_VERSION = 9;
 
     private static final List<String> TABLES = Arrays.asList(
             "employees", "advances", "customers", "extinguishers",
@@ -43,7 +43,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE extinguishers (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER, customer_name TEXT NOT NULL, " +
                 "phone TEXT, place_name TEXT, location TEXT, customer_status TEXT DEFAULT 'جديد', extinguisher_type TEXT, weight TEXT, count INTEGER NOT NULL, " +
-                "total_price REAL NOT NULL, sticker_date INTEGER NOT NULL, reminder_at INTEGER NOT NULL, image_uri TEXT, delivered_again INTEGER DEFAULT 0, created_at INTEGER NOT NULL)");
+                "total_price REAL NOT NULL, paid_amount REAL DEFAULT 0, sticker_date INTEGER NOT NULL, reminder_at INTEGER NOT NULL, image_uri TEXT, delivered_again INTEGER DEFAULT 0, created_at INTEGER NOT NULL)");
 
         db.execSQL("CREATE TABLE safety_certificates (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
@@ -102,6 +102,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (oldVersion < 8) {
             createExtinguisherImages(db);
             migrateLegacyExtinguisherImages(db);
+            createSettings(db);
+        }
+        if (oldVersion < 9) {
+            addColumnIfMissing(db, "extinguishers", "paid_amount", "REAL DEFAULT 0");
             createSettings(db);
         }
     }
