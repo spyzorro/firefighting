@@ -10,6 +10,8 @@ import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.location.Location;
@@ -32,6 +34,7 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -50,7 +53,9 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStreamWriter;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -742,16 +747,19 @@ public class MainActivity extends Activity {
                         "\nالإجمالي: " + money(totalPrice));
         button("فتح ملف العميل", () -> showCustomerDetails(name, phone, place, location, status, extinguisherCount, totalPrice));
         if (isTechnicianUser()) {
-            secondaryButton("تواصل واتساب", () -> openWhatsAppChat(phone));
+            actionButton("WhatsApp - تواصل", Color.rgb(22, 163, 74), R.drawable.ic_action_whatsapp, () -> openWhatsAppChat(phone));
         } else {
             secondaryButton("رسالة واتساب", () -> sendWhatsApp(phone, name, extinguisherCount));
             secondaryButton("مشاركة تقرير واتساب", () -> shareCustomerReportWhatsApp(phone, name, place, location, status, extinguisherCount, totalPrice));
         }
-        secondaryButton("فتح اللوكيشن", () -> {
+        Runnable openMapAction = () -> {
             if (emptyForDb(location).isEmpty()) toast("لا يوجد لوكيشن مسجل");
             else openLocation(location);
-        });
-        secondaryButton("تعديل بيانات العميل", () -> showCustomerEditPage(name, phone, place, location));
+        };
+        if (isTechnicianUser()) actionButton("Google Maps - فتح اللوكيشن", Color.rgb(37, 99, 235), R.drawable.ic_action_maps, openMapAction);
+        else secondaryButton("فتح اللوكيشن", openMapAction);
+        if (isTechnicianUser()) actionButton("تعديل بيانات العميل", Color.rgb(234, 88, 12), () -> showCustomerEditPage(name, phone, place, location));
+        else secondaryButton("تعديل بيانات العميل", () -> showCustomerEditPage(name, phone, place, location));
         secondaryButton("تغيير الحالة", () -> showCustomerStatusPage(name, phone, place, location, status));
         if (isSupervisorUser()) {
             secondaryButton("تحويل للفريق", () -> showAssignCustomerToTeam(name, phone, place, location, status, extinguisherCount, totalPrice));
@@ -759,7 +767,7 @@ public class MainActivity extends Activity {
         String assignmentId = db.teamAssignmentValue(name, phone, place, location, "assignment_id");
         String assignmentTeam = db.teamAssignmentValue(name, phone, place, location, "team_code");
         if (isTechnicianUser() && !assignmentId.isEmpty()) {
-            secondaryButton("إنهاء وإرسال للمشرف", () -> finishTeamAssignment(assignmentTeam, assignmentId, name, phone, place, location));
+            actionButton("تسليم للمشرف", Color.rgb(220, 38, 38), () -> finishTeamAssignment(assignmentTeam, assignmentId, name, phone, place, location));
         }
         secondaryButton("رجوع للعملاء", this::showCustomers);
     }
@@ -782,7 +790,7 @@ public class MainActivity extends Activity {
                         "\nالإجمالي: " + money(totalPrice));
         EditText teamCode = input("كود الفريق الذي سيستلم العميل", InputType.TYPE_CLASS_TEXT);
         teamCode.setText(db.setting("last_assign_team_code", db.setting("team_code", "")));
-        small("الفريق الذي يستخدم هذا الكود سيستلم هذا العميل فقط عند الضغط على استلام التكليفات.");
+        small("الفريق الذي يستخدم هذا الكود سيستلم هذا العميل تلقائيا عند فتح التطبيق.");
         button("تحويل العميل الآن", () -> {
             if (empty(teamCode)) return;
             try {
@@ -826,18 +834,22 @@ public class MainActivity extends Activity {
                         "\nإجمالي الطفايات: " + displayCount(extinguisherCount) +
                         "\nإجمالي المبلغ: " + money(totalPrice));
         if (isTechnicianUser()) {
-            secondaryButton("تواصل واتساب", () -> openWhatsAppChat(oldPhone));
+            actionButton("WhatsApp - تواصل", Color.rgb(22, 163, 74), R.drawable.ic_action_whatsapp, () -> openWhatsAppChat(oldPhone));
         } else {
             secondaryButton("رسالة واتساب جاهزة", () -> sendWhatsApp(oldPhone, oldName, extinguisherCount));
             secondaryButton("مشاركة تقرير العميل واتساب", () -> shareCustomerReportWhatsApp(oldPhone, oldName, oldPlace, oldLocation, currentStatus, extinguisherCount, totalPrice));
         }
-        secondaryButton("فتح اللوكيشن", () -> {
+        Runnable openMapAction = () -> {
             if (emptyForDb(oldLocation).isEmpty()) toast("لا يوجد لوكيشن مسجل");
             else openLocation(oldLocation);
-        });
-        secondaryButton("تعديل بيانات العميل", () -> showCustomerEditPage(oldName, oldPhone, oldPlace, oldLocation));
+        };
+        if (isTechnicianUser()) actionButton("Google Maps - فتح اللوكيشن", Color.rgb(37, 99, 235), R.drawable.ic_action_maps, openMapAction);
+        else secondaryButton("فتح اللوكيشن", openMapAction);
+        if (isTechnicianUser()) actionButton("تعديل بيانات العميل", Color.rgb(234, 88, 12), () -> showCustomerEditPage(oldName, oldPhone, oldPlace, oldLocation));
+        else secondaryButton("تعديل بيانات العميل", () -> showCustomerEditPage(oldName, oldPhone, oldPlace, oldLocation));
         secondaryButton("تغيير حالة العميل", () -> showCustomerStatusPage(oldName, oldPhone, oldPlace, oldLocation, currentStatus));
-        secondaryButton("إضافة صورة/مرفق", () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
+        if (isTechnicianUser()) actionButton("إضافة صور", Color.rgb(124, 58, 237), () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
+        else secondaryButton("إضافة صورة/مرفق", () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
         secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
 
         section("كل بيانات العميل");
@@ -1826,8 +1838,37 @@ public class MainActivity extends Activity {
         for (int i = 0; i < images.size(); i++) {
             String uri = images.get(i);
             card("صورة الطفاية " + (i + 1), "معرض صور الطفايات");
+            imagePreview(uri);
             secondaryButton("فتح الصورة", () -> openAttachment(uri));
             secondaryButton("حذف الصورة", () -> confirmDeleteExtinguisherImage(extinguisherId, uri, refresh));
+        }
+    }
+
+    private void imagePreview(String uriText) {
+        ImageView preview = new ImageView(this);
+        preview.setAdjustViewBounds(true);
+        preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        preview.setBackground(rounded(Color.rgb(248, 250, 252), Color.rgb(203, 213, 225), dp(12)));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(190));
+        lp.setMargins(0, dp(6), 0, dp(8));
+        content.addView(preview, lp);
+
+        String uri = emptyForDb(uriText);
+        if (uri.startsWith("http://") || uri.startsWith("https://")) {
+            new Thread(() -> {
+                try {
+                    InputStream input = new URL(uri).openStream();
+                    Bitmap bitmap = BitmapFactory.decodeStream(input);
+                    input.close();
+                    runOnUiThread(() -> preview.setImageBitmap(bitmap));
+                } catch (Exception ignored) {
+                }
+            }).start();
+        } else {
+            try {
+                preview.setImageURI(Uri.parse(uri));
+            } catch (Exception ignored) {
+            }
         }
     }
 
@@ -1881,6 +1922,7 @@ public class MainActivity extends Activity {
                 String title = safe(c.getString(0));
                 String uri = c.getString(1);
                 card(title, "تمت الإضافة: " + ReminderScheduler.formatDate(c.getLong(2)));
+                if (looksLikeImage(uri)) imagePreview(uri);
                 secondaryButton("فتح المرفق", () -> openAttachment(uri));
             }
         } finally {
@@ -1896,6 +1938,12 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             toast("تعذر فتح المرفق");
         }
+    }
+
+    private boolean looksLikeImage(String uri) {
+        String value = emptyForDb(uri).toLowerCase(Locale.US);
+        return value.startsWith("content:") || value.endsWith(".jpg") || value.endsWith(".jpeg") ||
+                value.endsWith(".png") || value.endsWith(".webp") || value.contains("/uploads/");
     }
 
     private void exportMonthlyPdf() {
@@ -2341,6 +2389,34 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(3), 0, dp(8));
         content.addView(b, lp);
+    }
+
+    private void actionButton(String text, int fillColor, Runnable action) {
+        actionButton(text, fillColor, 0, action);
+    }
+
+    private void actionButton(String text, int fillColor, int iconRes, Runnable action) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setTextColor(Color.WHITE);
+        b.setTextSize(15);
+        b.setAllCaps(false);
+        b.setMinHeight(dp(52));
+        b.setBackground(rounded(fillColor, darken(fillColor), dp(14)));
+        if (iconRes != 0) {
+            b.setCompoundDrawablesWithIntrinsicBounds(iconRes, 0, 0, 0);
+            b.setCompoundDrawablePadding(dp(8));
+        }
+        b.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(5), 0, dp(8));
+        content.addView(b, lp);
+    }
+
+    private int darken(int color) {
+        return Color.rgb(Math.max(0, Color.red(color) - 40),
+                Math.max(0, Color.green(color) - 40),
+                Math.max(0, Color.blue(color) - 40));
     }
 
     private EditText input(String hint, int inputType) {
