@@ -16,7 +16,7 @@ import java.util.Map;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String DB_NAME = "fire_salary_manager.db";
-    public static final int DB_VERSION = 11;
+    public static final int DB_VERSION = 12;
 
     private static final List<String> TABLES = Arrays.asList(
             "employees", "advances", "customers", "extinguishers",
@@ -62,7 +62,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
         db.execSQL("CREATE TABLE customer_attachments (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
-                "place_name TEXT, location TEXT, title TEXT, uri TEXT NOT NULL, created_at INTEGER NOT NULL)");
+                "place_name TEXT, location TEXT, title TEXT, uri TEXT NOT NULL, stage TEXT DEFAULT '', created_at INTEGER NOT NULL)");
 
         createExtinguisherImages(db);
 
@@ -116,6 +116,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
         if (oldVersion < 11) {
             createTeamAssignments(db);
+        }
+        if (oldVersion < 12) {
+            createAttachments(db);
+            addColumnIfMissing(db, "customer_attachments", "stage", "TEXT DEFAULT ''");
         }
     }
 
@@ -364,7 +368,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     private void createAttachments(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE IF NOT EXISTS customer_attachments (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
-                "place_name TEXT, location TEXT, title TEXT, uri TEXT NOT NULL, created_at INTEGER NOT NULL)");
+                "place_name TEXT, location TEXT, title TEXT, uri TEXT NOT NULL, stage TEXT DEFAULT '', created_at INTEGER NOT NULL)");
     }
 
     private void createExtinguisherImages(SQLiteDatabase db) {

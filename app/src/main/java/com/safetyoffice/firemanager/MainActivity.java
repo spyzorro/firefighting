@@ -118,6 +118,7 @@ public class MainActivity extends Activity {
     private String pendingAttachmentPhone = "";
     private String pendingAttachmentPlace = "";
     private String pendingAttachmentLocation = "";
+    private String pendingAttachmentStage = "";
     private boolean cameraForAttachment;
     private String pendingExtinguisherImageUri = "";
     private Uri pendingCameraImageUri;
@@ -1639,6 +1640,10 @@ public class MainActivity extends Activity {
         for (SyncManager.CompletedAssignment item : assignments) {
             card(emptyForDb(item.customerName).isEmpty() ? "تحديث فني" : item.customerName,
                     assignmentReviewText(item));
+            if (!emptyForDb(item.completedSnapshot).isEmpty()) {
+                actionButton("مشاركة للجروب واتساب", Color.rgb(22, 163, 74), R.drawable.ic_action_whatsapp,
+                        () -> shareAssignmentToWhatsAppGroup(item));
+            }
             ArrayList<String> images = snapshotImageUris(item.completedSnapshot);
             if (!images.isEmpty()) {
                 small("صور الفني: " + images.size());
@@ -1706,6 +1711,144 @@ public class MainActivity extends Activity {
             out.append("صور الفني: ").append(snapshotImageUris(item.completedSnapshot).size()).append("\n");
         } catch (Exception e) {
             out.append("تعذر قراءة تفاصيل التعديل.");
+        }
+        return out.toString();
+    }
+
+    private void shareAssignmentToWhatsAppGroup(SyncManager.CompletedAssignment item) {
+        String message = buildAssignmentGroupMessage(item);
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType("text/plain");
+        intent.putExtra(Intent.EXTRA_TEXT, message);
+        intent.setPackage("com.whatsapp");
+        try {
+            startActivity(intent);
+        } catch (Exception e) {
+            try {
+                intent.setPackage(null);
+                startActivity(Intent.createChooser(intent, "مشاركة تقرير التنفيذ"));
+            } catch (Exception ignored) {
+                toast("تعذر فتح واتساب للمشاركة");
+            }
+        }
+    }
+
+    private String buildAssignmentGroupMessage(SyncManager.CompletedAssignment item) {
+        JSONObject root;
+        try {
+            String raw = !emptyForDb(item.completedSnapshot).isEmpty() ? item.completedSnapshot : item.originalSnapshot;
+            root = new JSONObject(emptyForDb(raw).isEmpty() ? "{}" : raw);
+        } catch (Exception e) {
+            root = new JSONObject();
+        }
+        StringBuilder out = new StringBuilder();
+        out.append("تقرير تنفيذ الشغل\n");
+        out.append("العميل: ").append(safe(item.customerName)).append("\n");
+        out.append("الرقم: ").append(safe(item.phone)).append("\n");
+        out.append("اسم المكان: ").append(safe(item.place)).append("\n");
+        if (!emptyForDb(item.location).isEmpty()) out.append("اللوكيشن: ").append(item.location).append("\n");
+        out.append("نوع الشغل: ").append(detectWorkTypes(root)).append("\n");
+        out.append("الفني: ").append(safe(item.completedByEmail)).append("\n");
+        if (item.completedAt > 0) out.append("تاريخ التسليم: ").append(ReminderScheduler.formatDate(item.completedAt)).append("\n");
+        appendWorkDetails(out, root);
+        appendBeforeAfterLinks(out, root);
+        out.append("\nتم التنفيذ، برجاء مراجعة الصور والتفاصيل.");
+        return out.toString();
+    }
+
+    private String detectWorkTypes(JSONObject root) {
+        ArrayList<String> types = new ArrayList<>();
+        if (snapshotArrayCount(root, "extinguishers") > 0) types.add("طفايات");
+        if (snapshotArrayCount(root, "safety_certificates") > 0) types.add("شهادة سلامة");
+        if (snapshotArrayCount(root, "technical_reports") > 0) types.add("تقرير فني");
+        if (snapshotArrayCount(root, "maintenance_contracts") > 0) types.add("عقد صيانة");
+        return types.isEmpty() ? "شغل عام" : joinText(types);
+    }
+
+    private void appendWorkDetails(StringBuilder out, JSONObject root) {
+        JSONArray extinguishers = root.optJSONArray("extinguishers");
+        if (extinguishers != null && extinguishers.length() > 0) {
+            out.append("\nتفاصيل الطفايات:");
+            for (int i = 0; i < extinguishers.length(); i++) {
+                JSONObject row = extinguishers.optJSONObject(i);
+                if (row == null) continue;
+                out.append("\n- النوع: ").append(row.optString("extinguisher_type", row.optString("type", "-")));
+                out.append(" | الوزن: ").append(row.optString("weight", "-"));
+                out.append(" | العدد: ").append(row.optString("count", "-"));
+                out.append(" | المبلغ: ").append(row.optString("total_price", "-")).append(" ريال");
+            }
+            out.append("\n");
+        }
+        appendSimpleWorkCount(out, root, "safety_certificates", "شهادات السلامة");
+        appendSimpleWorkCount(out, root, "technical_reports", "التقارير الفنية");
+        appendSimpleWorkCount(out, root, "maintenance_contracts", "عقود الصيانة");
+    }
+
+    private void appendSimpleWorkCount(StringBuilder out, JSONObject root, String key, String label) {
+        int count = snapshotArrayCount(root, key);
+        if (count > 0) out.append("\n").append(label).append(": ").append(count);
+    }
+
+    private void appendBeforeAfterLinks(StringBuilder out, JSONObject root) {
+        ArrayList<String> before = new ArrayList<>();
+        ArrayList<String> after = new ArrayList<>();
+        ArrayList<String> other = new ArrayList<>();
+        JSONArray attachments = root.optJSONArray("customer_attachments");
+        if (attachments != null) {
+            for (int i = 0; i < attachments.length(); i++) {
+                JSONObject row = attachments.optJSONObject(i);
+                if (row == null) continue;
+                String uri = row.optString("uri", "");
+                String stage = row.optString("stage", "");
+                addUriByStage(before, after, other, uri, stage);
+            }
+        }
+        addSnapshotImagesTo(after, root.optJSONArray("extinguisher_images"), "uri");
+        addSnapshotImagesTo(after, root.optJSONArray("extinguishers"), "image_uri");
+        appendImageSection(out, "\nصور قبل التنفيذ", before);
+        appendImageSection(out, "\nصور بعد التنفيذ", after);
+        appendImageSection(out, "\nمرفقات أخرى", other);
+    }
+
+    private void addUriByStage(ArrayList<String> before, ArrayList<String> after, ArrayList<String> other, String uri, String stage) {
+        String clean = emptyForDb(uri);
+        if (clean.isEmpty()) return;
+        if ("قبل التنفيذ".equals(stage)) addUnique(before, clean);
+        else if ("بعد التنفيذ".equals(stage)) addUnique(after, clean);
+        else addUnique(other, clean);
+    }
+
+    private void addSnapshotImagesTo(ArrayList<String> target, JSONArray rows, String key) {
+        if (rows == null) return;
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row == null) continue;
+            addUnique(target, row.optString(key, ""));
+        }
+    }
+
+    private void appendImageSection(StringBuilder out, String title, ArrayList<String> uris) {
+        if (uris.isEmpty()) return;
+        out.append(title).append(":");
+        for (String uri : uris) out.append("\n- ").append(uri);
+        out.append("\n");
+    }
+
+    private void addUnique(ArrayList<String> list, String value) {
+        String clean = emptyForDb(value);
+        if (!clean.isEmpty() && !list.contains(clean)) list.add(clean);
+    }
+
+    private int snapshotArrayCount(JSONObject root, String key) {
+        JSONArray rows = root.optJSONArray(key);
+        return rows == null ? 0 : rows.length();
+    }
+
+    private String joinText(ArrayList<String> values) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) out.append("، ");
+            out.append(values.get(i));
         }
         return out.toString();
     }
@@ -1985,10 +2128,23 @@ public class MainActivity extends Activity {
         pendingAttachmentLocation = location;
         new AlertDialog.Builder(this)
                 .setTitle("إضافة صورة")
-                .setItems(new String[]{"تصوير بالكاميرا", "اختيار من المعرض", "اختيار ملف PDF"}, (dialog, which) -> {
-                    if (which == 0) takeAttachmentPhoto();
-                    else if (which == 1) chooseAttachmentFromGallery();
-                    else chooseAttachmentFile();
+                .setItems(new String[]{"قبل التنفيذ - كاميرا", "قبل التنفيذ - معرض", "بعد التنفيذ - كاميرا", "بعد التنفيذ - معرض", "اختيار ملف PDF"}, (dialog, which) -> {
+                    if (which == 0) {
+                        pendingAttachmentStage = "قبل التنفيذ";
+                        takeAttachmentPhoto();
+                    } else if (which == 1) {
+                        pendingAttachmentStage = "قبل التنفيذ";
+                        chooseAttachmentFromGallery();
+                    } else if (which == 2) {
+                        pendingAttachmentStage = "بعد التنفيذ";
+                        takeAttachmentPhoto();
+                    } else if (which == 3) {
+                        pendingAttachmentStage = "بعد التنفيذ";
+                        chooseAttachmentFromGallery();
+                    } else {
+                        pendingAttachmentStage = "مرفق";
+                        chooseAttachmentFile();
+                    }
                 })
                 .show();
     }
@@ -2131,6 +2287,7 @@ public class MainActivity extends Activity {
         cv.put("location", pendingAttachmentLocation);
         cv.put("title", attachmentTitle(finalUri));
         cv.put("uri", savedUri);
+        cv.put("stage", pendingAttachmentStage);
         cv.put("created_at", System.currentTimeMillis());
         db.insert("customer_attachments", cv);
         afterSave("تم حفظ المرفق مع العميل");
@@ -2285,7 +2442,7 @@ public class MainActivity extends Activity {
 
     private void listCustomerAttachments(String name, String phone, String place, String location) {
         section("صور ومرفقات العميل");
-        Cursor c = db.raw("SELECT id, title, uri, created_at FROM customer_attachments " +
+        Cursor c = db.raw("SELECT id, title, uri, created_at, IFNULL(stage,'') FROM customer_attachments " +
                 "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC",
                 customerArgs(name, phone, place, location));
         try {
@@ -2293,7 +2450,9 @@ public class MainActivity extends Activity {
                 long id = c.getLong(0);
                 String title = safe(c.getString(1));
                 String uri = c.getString(2);
-                card(title, "تمت الإضافة: " + ReminderScheduler.formatDate(c.getLong(3)));
+                String stage = emptyForDb(c.getString(4));
+                card(title, "المرحلة: " + (stage.isEmpty() ? "-" : stage) +
+                        "\nتمت الإضافة: " + ReminderScheduler.formatDate(c.getLong(3)));
                 if (looksLikeImage(uri)) imagePreview(uri);
                 secondaryButton("فتح المرفق", () -> openAttachment(uri));
                 secondaryButton("حذف الصورة", () -> confirmDeleteCustomerAttachment(id, name, phone, place, location));
