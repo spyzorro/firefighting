@@ -541,6 +541,23 @@ public class SyncManager {
                 });
     }
 
+    public void deleteCustomerAssignments(String teamCode, String name, String phone, String place, String location) {
+        FirebaseUser u = user();
+        String code = cleanTeamCode(teamCode);
+        if (u == null || code.length() == 0) return;
+        firestore.collection("fire_manager_assignments").document(code).collection("items")
+                .whereEqualTo("customer_name", name)
+                .whereEqualTo("phone", phone)
+                .whereEqualTo("place_name", place)
+                .whereEqualTo("location", location)
+                .get()
+                .addOnSuccessListener(query -> {
+                    for (DocumentSnapshot doc : query.getDocuments()) {
+                        doc.getReference().delete();
+                    }
+                });
+    }
+
     private long asLong(Object value) {
         if (value instanceof Number) return ((Number) value).longValue();
         try {

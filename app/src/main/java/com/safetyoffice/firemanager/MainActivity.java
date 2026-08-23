@@ -915,6 +915,8 @@ public class MainActivity extends Activity {
         if (isTechnicianUser()) actionButton("تعديل بيانات العميل", Color.rgb(234, 88, 12), () -> showCustomerEditPage(oldName, oldPhone, oldPlace, oldLocation));
         else secondaryButton("تعديل بيانات العميل", () -> showCustomerEditPage(oldName, oldPhone, oldPlace, oldLocation));
         secondaryButton("تغيير حالة العميل", () -> showCustomerStatusPage(oldName, oldPhone, oldPlace, oldLocation, currentStatus));
+        if (isSupervisorUser()) actionButton("حذف العميل نهائيا", Color.rgb(220, 38, 38),
+                () -> confirmDeleteCustomer(oldName, oldPhone, oldPlace, oldLocation));
         if (isTechnicianUser()) actionButton("إضافة صور", Color.rgb(124, 58, 237), () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
         else secondaryButton("إضافة صورة/مرفق", () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
         secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
@@ -922,6 +924,21 @@ public class MainActivity extends Activity {
         section("كل بيانات العميل");
         listCustomerRecords(oldName, oldPhone, oldPlace, oldLocation);
         listCustomerAttachments(oldName, oldPhone, oldPlace, oldLocation);
+    }
+
+    private void confirmDeleteCustomer(String name, String phone, String place, String location) {
+        new AlertDialog.Builder(this)
+                .setTitle("حذف العميل")
+                .setMessage("سيتم حذف العميل وكل بياناته من البرنامج. هل أنت متأكد؟")
+                .setPositiveButton("حذف نهائي", (dialog, which) -> {
+                    String teamCode = db.setting("team_code", "");
+                    db.deleteCustomerEverywhere(name, phone, place, location);
+                    sync.deleteCustomerAssignments(teamCode, name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+                    afterSave("تم حذف العميل وكل بياناته");
+                    showCustomers();
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
     }
 
     private void showCustomerEditPage(String oldName, String oldPhone, String oldPlace, String oldLocation) {

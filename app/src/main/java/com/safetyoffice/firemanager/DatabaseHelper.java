@@ -227,6 +227,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             db.delete("technical_reports", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
             db.delete("maintenance_contracts", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
             db.delete("customer_attachments", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+            db.delete("team_assignments", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
