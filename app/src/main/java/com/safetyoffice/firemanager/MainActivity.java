@@ -270,6 +270,8 @@ public class MainActivity extends Activity {
         tabs.setOrientation(LinearLayout.HORIZONTAL);
         addTab(tabs, "تسجيل", R.drawable.ic_nav_extinguisher, v -> showExtinguishers());
         addTab(tabs, "العملاء", R.drawable.ic_nav_customers, v -> showCustomers());
+        addTab(tabs, "تركيبات", R.drawable.ic_nav_tasks, v -> showInstallations());
+        addTab(tabs, "عقود", R.drawable.ic_nav_alerts, v -> showMaintenance());
         addTab(tabs, "تنبيهات", R.drawable.ic_nav_alerts, v -> showAlerts());
         addTab(tabs, "الفنيين", R.drawable.ic_nav_sync, v -> showTeamInbox());
         addTab(tabs, "التقرير", R.drawable.ic_nav_report, v -> showMonthlyReport());
@@ -314,6 +316,8 @@ public class MainActivity extends Activity {
             button("استلام التكليفات المرسلة لي", this::showSync);
             section("اختصارات");
             homeAction("العملاء المحولون", "الشغل المرسل لك فقط", this::showCustomers);
+            homeAction("تركيبات", "تسجيل بنود التركيب وصورها", this::showInstallations);
+            homeAction("عقود الصيانة", "تعديل تفاصيل الزيارة والملاحظات", this::showMaintenance);
             homeAction("مزامنة Google", "استلام التكليفات وإرسال التحديث", this::showSync);
             return;
         }
@@ -336,6 +340,8 @@ public class MainActivity extends Activity {
         button("تسجيل عميل وطفايات بسرعة", this::showExtinguishers);
         section("اختصارات");
         homeAction("العملاء", "بحث وتغيير حالة وواتساب", this::showCustomers);
+        homeAction("تركيبات", "بنود وصور التركيبات لكل العملاء", this::showInstallations);
+        homeAction("عقود الصيانة", "زيارات كل 3 شهور وتحويل للفنيين", this::showMaintenance);
         homeAction("تنبيهات", "المواعيد القريبة والمتأخرة", this::showAlerts);
         homeAction("التقرير", "إجماليات الشهر والنسب", this::showMonthlyReport);
         homeAction("المزيد", "مرتبات، شهادات، صيانة، إعدادات", this::showMore);
@@ -347,6 +353,8 @@ public class MainActivity extends Activity {
         section("المزيد");
         if (isTechnicianUser()) {
             homeAction("العملاء المحولون", "الشغل المرسل لك فقط", this::showCustomers);
+            homeAction("تركيبات", "تسجيل بنود التركيب وصورها", this::showInstallations);
+            homeAction("عقود الصيانة", "تفاصيل الزيارات المحولة لك", this::showMaintenance);
             homeAction("مزامنة Google", "استلام التكليفات وإرسال التحديث", this::showSync);
             return;
         }
@@ -1137,14 +1145,19 @@ public class MainActivity extends Activity {
         listCustomerAnnualRecords("safety_certificates", "certificate_date", "شهادة سلامة", args);
         listCustomerAnnualRecords("technical_reports", "report_date", "تقرير فني", args);
 
-        Cursor m = db.raw("SELECT start_date, next_visit_at, reminder_at FROM maintenance_contracts " +
+        Cursor m = db.raw("SELECT id, start_date, next_visit_at, reminder_at, extinguisher_count, detector_count, bell_count, breaker_count, exit_count, panel_count, IFNULL(note,'') FROM maintenance_contracts " +
                 "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
         try {
             while (m.moveToNext()) {
+                long id = m.getLong(0);
                 card("عقد صيانة",
-                        "تاريخ البداية: " + ReminderScheduler.formatDate(m.getLong(0)) +
-                                "\nالزيارة القادمة: " + ReminderScheduler.formatDate(m.getLong(1)) +
-                                "\nالتذكير: " + ReminderScheduler.formatDate(m.getLong(2)));
+                        "تاريخ البداية: " + ReminderScheduler.formatDate(m.getLong(1)) +
+                                "\nالزيارة القادمة: " + ReminderScheduler.formatDate(m.getLong(2)) +
+                                "\nالتذكير: " + ReminderScheduler.formatDate(m.getLong(3)) +
+                                "\nطفايات: " + m.getInt(4) + " | كواشف: " + m.getInt(5) + " | أجراس: " + m.getInt(6) +
+                                "\nكواسر: " + m.getInt(7) + " | Exit: " + m.getInt(8) + " | لوحات: " + m.getInt(9) +
+                                "\nملاحظات: " + safe(m.getString(10)));
+                secondaryButton("تعديل عقد الصيانة", () -> showMaintenanceEdit(id));
             }
         } finally {
             m.close();
@@ -1467,6 +1480,85 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void showInstallations() {
+        currentTab = "installations";
+        clear();
+        section("تركيبات");
+        EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
+        EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
+        EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
+        EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
+        EditText itemType = input("نوع التركيب", InputType.TYPE_CLASS_TEXT);
+        EditText itemNumber = input("رقم القطعة / العدد", numberType());
+        itemNumber.setText("1");
+        EditText subtype = input("النوع التفصيلي", InputType.TYPE_CLASS_TEXT);
+        EditText note = input("ملاحظات الفني / التركيب", InputType.TYPE_CLASS_TEXT);
+        note.setSingleLine(false);
+        note.setMinLines(2);
+        voiceAllButton("قول بيانات التركيب مرة واحدة", customer, place, itemType, itemNumber, subtype, note);
+        section("اختيار نوع سريع");
+        for (String type : installationTypes()) {
+            actionButton(type, installationTypeColor(type), () -> {
+                itemType.setText(type);
+                itemType.setSelection(itemType.getText().length());
+                if (emptyForDb(txt(subtype)).isEmpty() && type.contains("كاشف")) subtype.setText(type.replace("كاشف", "").trim());
+            });
+        }
+        button("حفظ التركيب وإضافة صور", () -> {
+            if (empty(customer) || empty(itemType)) return;
+            saveCustomerIfMissing(txt(customer), txt(phone), txt(place), txt(location));
+            ContentValues cv = new ContentValues();
+            cv.put("customer_name", txt(customer));
+            cv.put("phone", txt(phone));
+            cv.put("place_name", txt(place));
+            cv.put("location", txt(location));
+            cv.put("customer_status", customerStatus(txt(customer), txt(phone), txt(place), txt(location)));
+            cv.put("item_type", txt(itemType));
+            cv.put("item_number", parseInt(txt(itemNumber), 1));
+            cv.put("subtype", txt(subtype));
+            cv.put("note", txt(note));
+            cv.put("created_at", System.currentTimeMillis());
+            long id = db.insert("installation_items", cv);
+            saveContactIfEnabled(txt(customer), txt(phone));
+            afterSave("تم حفظ التركيب");
+            chooseInstallationImage(txt(customer), txt(phone), txt(place), txt(location), id, "بعد التنفيذ");
+        });
+
+        section("كل التركيبات");
+        Cursor c = db.raw("SELECT id, customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), " +
+                "item_type, item_number, IFNULL(subtype,''), IFNULL(note,''), created_at FROM installation_items ORDER BY created_at DESC");
+        boolean any = false;
+        try {
+            while (c.moveToNext()) {
+                any = true;
+                long id = c.getLong(0);
+                String name = c.getString(1);
+                String itemPhone = c.getString(2);
+                String itemPlace = c.getString(3);
+                String itemLocation = c.getString(4);
+                String type = c.getString(5);
+                int number = c.getInt(6);
+                String typeDetail = c.getString(7);
+                String itemNote = c.getString(8);
+                card(type + " رقم " + number,
+                        "العميل: " + safe(name) +
+                                "\nرقم: " + safe(itemPhone) +
+                                "\nاسم المكان: " + safe(itemPlace) +
+                                "\nالنوع التفصيلي: " + blankDash(typeDetail) +
+                                "\nملاحظات: " + blankDash(itemNote) +
+                                "\nتاريخ الإضافة: " + ReminderScheduler.formatDate(c.getLong(9)));
+                listInstallationImages(id, name, itemPhone, itemPlace, itemLocation);
+                actionButton("إضافة صور", Color.rgb(14, 165, 233), () -> chooseInstallationImage(name, itemPhone, itemPlace, itemLocation, id, "بعد التنفيذ"));
+                secondaryButton("فتح ملف العميل", () -> openCustomerDetails(name, itemPhone, itemPlace, itemLocation));
+                secondaryButton("مشاركة البند واتساب", () -> shareInstallationToWhatsApp(type, number, typeDetail, itemNote, id, name, itemPhone, itemPlace, itemLocation));
+                if (isSupervisorUser()) secondaryButton("حذف بند التركيب", () -> confirmDeleteInstallation(id, name, itemPhone, itemPlace, itemLocation));
+            }
+        } finally {
+            c.close();
+        }
+        if (!any) small("لا توجد تركيبات مسجلة حتى الآن.");
+    }
+
     private void showMaintenance() {
         currentTab = "maintenance";
         clear();
@@ -1477,13 +1569,24 @@ public class MainActivity extends Activity {
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
         EditText start = input("تاريخ بداية العقد yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         start.setText(today());
-        voiceAllButton("قول بيانات عقد الصيانة مرة واحدة", customer, place, location, start);
+        EditText extinguisherCount = input("عدد الطفايات في العقد", numberType());
+        EditText detectorCount = input("عدد الكواشف", numberType());
+        EditText bellCount = input("عدد الأجراس", numberType());
+        EditText breakerCount = input("عدد الكواسر", numberType());
+        EditText exitCount = input("عدد Exit", numberType());
+        EditText panelCount = input("عدد لوحات الإنذار/الحريق", numberType());
+        EditText note = input("تفاصيل وملاحظات العقد", InputType.TYPE_CLASS_TEXT);
+        note.setSingleLine(false);
+        note.setMinLines(2);
+        voiceAllButton("قول بيانات عقد الصيانة مرة واحدة", customer, place, location, start,
+                extinguisherCount, detectorCount, bellCount, breakerCount, exitCount, panelCount, note);
         button("حفظ عقد الصيانة", () -> {
             if (empty(customer) || empty(start)) return;
             try {
                 long startDate = ReminderScheduler.parseDate(txt(start));
                 long visit = ReminderScheduler.addMonthsAvoidWeekend(startDate, 3);
                 long reminder = ReminderScheduler.maintenanceReminder(visit);
+                saveCustomerIfMissing(txt(customer), txt(phone), txt(place), txt(location));
                 ContentValues cv = new ContentValues();
                 cv.put("customer_name", txt(customer));
                 cv.put("phone", txt(phone));
@@ -1493,6 +1596,13 @@ public class MainActivity extends Activity {
                 cv.put("start_date", startDate);
                 cv.put("next_visit_at", visit);
                 cv.put("reminder_at", reminder);
+                cv.put("extinguisher_count", parseInt(txt(extinguisherCount), 0));
+                cv.put("detector_count", parseInt(txt(detectorCount), 0));
+                cv.put("bell_count", parseInt(txt(bellCount), 0));
+                cv.put("breaker_count", parseInt(txt(breakerCount), 0));
+                cv.put("exit_count", parseInt(txt(exitCount), 0));
+                cv.put("panel_count", parseInt(txt(panelCount), 0));
+                cv.put("note", txt(note));
                 cv.put("created_at", System.currentTimeMillis());
                 db.insert("maintenance_contracts", cv);
                 saveContactIfEnabled(txt(customer), txt(phone));
@@ -1508,13 +1618,113 @@ public class MainActivity extends Activity {
         Cursor c = db.all("maintenance_contracts");
         try {
             while (c.moveToNext()) {
-                card(c.getString(c.getColumnIndexOrThrow("customer_name")),
+                long id = c.getLong(c.getColumnIndexOrThrow("id"));
+                String name = c.getString(c.getColumnIndexOrThrow("customer_name"));
+                String itemPhone = rawVal(c, "phone");
+                String itemPlace = rawVal(c, "place_name");
+                String itemLocation = rawVal(c, "location");
+                card(name,
                         "الزيارة القادمة: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("next_visit_at"))) +
                                 "\nالتنبيه قبلها: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("reminder_at"))) +
-                                "\nرقم: " + val(c, "phone") +
-                                "\nاسم المكان: " + val(c, "place_name") +
-                                "\nلوكيشن: " + val(c, "location"));
+                                "\nرقم: " + itemPhone +
+                                "\nاسم المكان: " + itemPlace +
+                                "\nلوكيشن: " + itemLocation +
+                                maintenanceDetailsText(c));
+                secondaryButton("تعديل العقد", () -> showMaintenanceEdit(id));
+                if (isSupervisorUser()) {
+                    secondaryButton("تحويل العقد للفريق", () -> showAssignCustomerToTeam(name, itemPhone, itemPlace, itemLocation,
+                            customerStatus(name, itemPhone, itemPlace, itemLocation),
+                            customerExtinguisherCount(name, itemPhone, itemPlace, itemLocation),
+                            customerTotalPrice(name, itemPhone, itemPlace, itemLocation)));
+                }
             }
+        } finally {
+            c.close();
+        }
+    }
+
+    private String maintenanceDetailsText(Cursor c) {
+        return "\nتفاصيل العقد:" +
+                "\nطفايات: " + intVal(c, "extinguisher_count") +
+                " | كواشف: " + intVal(c, "detector_count") +
+                " | أجراس: " + intVal(c, "bell_count") +
+                "\nكواسر: " + intVal(c, "breaker_count") +
+                " | Exit: " + intVal(c, "exit_count") +
+                " | لوحات: " + intVal(c, "panel_count") +
+                "\nملاحظات: " + safe(rawVal(c, "note"));
+    }
+
+    private void showMaintenanceEdit(long id) {
+        currentTab = "maintenance_edit";
+        clear();
+        section("تعديل عقد الصيانة");
+        Cursor c = db.raw("SELECT * FROM maintenance_contracts WHERE id=?", String.valueOf(id));
+        try {
+            if (!c.moveToFirst()) {
+                small("العقد غير موجود.");
+                secondaryButton("رجوع", this::showMaintenance);
+                return;
+            }
+            EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
+            customer.setText(rawVal(c, "customer_name"));
+            EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
+            phone.setText(rawVal(c, "phone"));
+            EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
+            place.setText(rawVal(c, "place_name"));
+            EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
+            location.setText(rawVal(c, "location"));
+            EditText start = input("تاريخ بداية العقد yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
+            start.setText(ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("start_date"))));
+            EditText extinguisherCount = input("عدد الطفايات في العقد", numberType());
+            extinguisherCount.setText(String.valueOf(intVal(c, "extinguisher_count")));
+            EditText detectorCount = input("عدد الكواشف", numberType());
+            detectorCount.setText(String.valueOf(intVal(c, "detector_count")));
+            EditText bellCount = input("عدد الأجراس", numberType());
+            bellCount.setText(String.valueOf(intVal(c, "bell_count")));
+            EditText breakerCount = input("عدد الكواسر", numberType());
+            breakerCount.setText(String.valueOf(intVal(c, "breaker_count")));
+            EditText exitCount = input("عدد Exit", numberType());
+            exitCount.setText(String.valueOf(intVal(c, "exit_count")));
+            EditText panelCount = input("عدد لوحات الإنذار/الحريق", numberType());
+            panelCount.setText(String.valueOf(intVal(c, "panel_count")));
+            EditText note = input("تفاصيل وملاحظات العقد", InputType.TYPE_CLASS_TEXT);
+            note.setSingleLine(false);
+            note.setMinLines(2);
+            note.setText(rawVal(c, "note"));
+            voiceAllButton("قول تعديل العقد مرة واحدة", customer, place, location, start,
+                    extinguisherCount, detectorCount, bellCount, breakerCount, exitCount, panelCount, note);
+            button("حفظ تعديل العقد", () -> {
+                if (empty(customer) || empty(start)) return;
+                try {
+                    long startDate = ReminderScheduler.parseDate(txt(start));
+                    long visit = ReminderScheduler.addMonthsAvoidWeekend(startDate, 3);
+                    long reminder = ReminderScheduler.maintenanceReminder(visit);
+                    ContentValues cv = new ContentValues();
+                    cv.put("customer_name", txt(customer));
+                    cv.put("phone", txt(phone));
+                    cv.put("place_name", txt(place));
+                    cv.put("location", txt(location));
+                    cv.put("customer_status", customerStatus(txt(customer), txt(phone), txt(place), txt(location)));
+                    cv.put("start_date", startDate);
+                    cv.put("next_visit_at", visit);
+                    cv.put("reminder_at", reminder);
+                    cv.put("extinguisher_count", parseInt(txt(extinguisherCount), 0));
+                    cv.put("detector_count", parseInt(txt(detectorCount), 0));
+                    cv.put("bell_count", parseInt(txt(bellCount), 0));
+                    cv.put("breaker_count", parseInt(txt(breakerCount), 0));
+                    cv.put("exit_count", parseInt(txt(exitCount), 0));
+                    cv.put("panel_count", parseInt(txt(panelCount), 0));
+                    cv.put("note", txt(note));
+                    db.update("maintenance_contracts", cv, "id=?", String.valueOf(id));
+                    saveCustomerIfMissing(txt(customer), txt(phone), txt(place), txt(location));
+                    saveContactIfEnabled(txt(customer), txt(phone));
+                    afterSave("تم حفظ تعديل عقد الصيانة");
+                    showMaintenance();
+                } catch (Exception e) {
+                    toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
+                }
+            });
+            secondaryButton("إلغاء والرجوع للعقود", this::showMaintenance);
         } finally {
             c.close();
         }
@@ -2008,13 +2218,46 @@ public class MainActivity extends Activity {
             changes += appendSnapshotDiff(out, before, after, "total_price", "المبلغ");
             changes += appendSnapshotDiff(out, before, after, "weight", "الوزن");
             changes += appendSnapshotDiff(out, before, after, "type", "نوع الطفاية");
-            if (changes == 0) out.append("لا يوجد تعديل في العدد أو المبلغ أو الوزن أو النوع.\n");
+            changes += appendMaintenanceSnapshotDiff(out, before, after);
+            if (changes == 0) out.append("لا يوجد تعديل في الطفايات أو تفاصيل عقد الصيانة.\n");
             out.append("صور الفني: ").append(snapshotImageUris(item.completedSnapshot).size()).append("\n");
             out.append("بنود التركيبات: ").append(snapshotArrayCount(after, "installation_items")).append("\n");
         } catch (Exception e) {
             out.append("تعذر قراءة تفاصيل التعديل.");
         }
         return out.toString();
+    }
+
+    private int appendMaintenanceSnapshotDiff(StringBuilder out, JSONObject before, JSONObject after) {
+        int changes = 0;
+        changes += appendMaintenanceValueDiff(out, before, after, "extinguisher_count", "عقد الصيانة - طفايات");
+        changes += appendMaintenanceValueDiff(out, before, after, "detector_count", "عقد الصيانة - كواشف");
+        changes += appendMaintenanceValueDiff(out, before, after, "bell_count", "عقد الصيانة - أجراس");
+        changes += appendMaintenanceValueDiff(out, before, after, "breaker_count", "عقد الصيانة - كواسر");
+        changes += appendMaintenanceValueDiff(out, before, after, "exit_count", "عقد الصيانة - Exit");
+        changes += appendMaintenanceValueDiff(out, before, after, "panel_count", "عقد الصيانة - لوحات");
+        changes += appendMaintenanceValueDiff(out, before, after, "note", "عقد الصيانة - ملاحظات");
+        return changes;
+    }
+
+    private int appendMaintenanceValueDiff(StringBuilder out, JSONObject before, JSONObject after, String key, String label) {
+        String oldValue = snapshotMaintenanceValue(before, key);
+        String newValue = snapshotMaintenanceValue(after, key);
+        if (oldValue.equals(newValue)) return 0;
+        out.append(label).append(": ").append(oldValue.isEmpty() ? "-" : oldValue)
+                .append(" -> ").append(newValue.isEmpty() ? "-" : newValue).append("\n");
+        return 1;
+    }
+
+    private String snapshotMaintenanceValue(JSONObject root, String key) {
+        try {
+            JSONArray rows = root.optJSONArray("maintenance_contracts");
+            if (rows == null || rows.length() == 0) return "";
+            Object value = rows.getJSONObject(0).opt(key);
+            return value == null || value == JSONObject.NULL ? "" : String.valueOf(value);
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private void shareAssignmentToWhatsAppGroup(SyncManager.CompletedAssignment item) {
@@ -2161,7 +2404,24 @@ public class MainActivity extends Activity {
         }
         appendSimpleWorkCount(out, root, "safety_certificates", "شهادات السلامة");
         appendSimpleWorkCount(out, root, "technical_reports", "التقارير الفنية");
-        appendSimpleWorkCount(out, root, "maintenance_contracts", "عقود الصيانة");
+        JSONArray contracts = root.optJSONArray("maintenance_contracts");
+        if (contracts != null && contracts.length() > 0) {
+            out.append("\n\nتفاصيل عقود الصيانة:");
+            for (int i = 0; i < contracts.length(); i++) {
+                JSONObject row = contracts.optJSONObject(i);
+                if (row == null) continue;
+                out.append("\n- الزيارة: ").append(formatJsonDate(row, "next_visit_at"));
+                out.append(" | طفايات: ").append(row.optString("extinguisher_count", "0"));
+                out.append(" | كواشف: ").append(row.optString("detector_count", "0"));
+                out.append(" | أجراس: ").append(row.optString("bell_count", "0"));
+                out.append(" | كواسر: ").append(row.optString("breaker_count", "0"));
+                out.append(" | Exit: ").append(row.optString("exit_count", "0"));
+                out.append(" | لوحات: ").append(row.optString("panel_count", "0"));
+                String note = row.optString("note", "");
+                if (!note.isEmpty()) out.append(" | ملاحظات: ").append(note);
+            }
+            out.append("\n");
+        }
         JSONArray installations = root.optJSONArray("installation_items");
         if (installations != null && installations.length() > 0) {
             out.append("\n\nتفاصيل التركيبات:");
@@ -2182,6 +2442,11 @@ public class MainActivity extends Activity {
     private void appendSimpleWorkCount(StringBuilder out, JSONObject root, String key, String label) {
         int count = snapshotArrayCount(root, key);
         if (count > 0) out.append("\n").append(label).append(": ").append(count);
+    }
+
+    private String formatJsonDate(JSONObject row, String key) {
+        long value = row.optLong(key, 0);
+        return value > 0 ? ReminderScheduler.formatDate(value) : "-";
     }
 
     private void appendBeforeAfterLinks(StringBuilder out, JSONObject root) {
@@ -3213,6 +3478,25 @@ public class MainActivity extends Activity {
             c.close();
         }
         return "جديد";
+    }
+
+    private void saveCustomerIfMissing(String name, String phone, String place, String location) {
+        if (emptyForDb(name).trim().isEmpty()) return;
+        Cursor c = db.raw("SELECT id FROM customers WHERE name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? LIMIT 1",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+        try {
+            if (c.moveToFirst()) return;
+        } finally {
+            c.close();
+        }
+        ContentValues cv = new ContentValues();
+        cv.put("name", name);
+        cv.put("phone", emptyForDb(phone));
+        cv.put("place_name", emptyForDb(place));
+        cv.put("location", emptyForDb(location));
+        cv.put("customer_status", "جديد");
+        cv.put("created_at", System.currentTimeMillis());
+        db.insert("customers", cv);
     }
 
     private int drawPdfLine(Canvas canvas, Paint paint, String text, int x, int y) {
@@ -4492,6 +4776,12 @@ public class MainActivity extends Activity {
 
     private String rawVal(Cursor c, String column) {
         return emptyForDb(c.getString(c.getColumnIndexOrThrow(column)));
+    }
+
+    private int intVal(Cursor c, String column) {
+        int index = c.getColumnIndex(column);
+        if (index < 0 || c.isNull(index)) return 0;
+        return c.getInt(index);
     }
 
     private String safe(String value) {

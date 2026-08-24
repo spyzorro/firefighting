@@ -49,7 +49,11 @@ public class ReminderScheduler {
                     long reminder = maintenanceReminder(visit);
                     schedule(context, "maintenance", id * 100 + i, reminder, "زيارة صيانة قريبة",
                             "زيارة " + customer + " يوم " + DATE.format(new Date(visit)) +
-                                    "\nرقم: " + safe(phone) + "\nلوكيشن: " + safe(loc));
+                                    "\nرقم: " + safe(phone) + "\nلوكيشن: " + safe(loc) +
+                                    "\nطفايات: " + intVal(m, "extinguisher_count") +
+                                    " | كواشف: " + intVal(m, "detector_count") +
+                                    " | أجراس: " + intVal(m, "bell_count") +
+                                    " | كواسر: " + intVal(m, "breaker_count"));
                 }
             }
         } finally {
@@ -184,5 +188,11 @@ public class ReminderScheduler {
 
     private static String safe(String s) {
         return s == null || s.trim().isEmpty() ? "-" : s;
+    }
+
+    private static int intVal(Cursor c, String column) {
+        int index = c.getColumnIndex(column);
+        if (index < 0 || c.isNull(index)) return 0;
+        return c.getInt(index);
     }
 }

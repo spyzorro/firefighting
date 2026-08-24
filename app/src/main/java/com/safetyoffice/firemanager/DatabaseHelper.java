@@ -16,7 +16,7 @@ import java.util.Map;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String DB_NAME = "fire_salary_manager.db";
-    public static final int DB_VERSION = 13;
+    public static final int DB_VERSION = 14;
 
     private static final List<String> TABLES = Arrays.asList(
             "employees", "advances", "customers", "extinguishers",
@@ -59,7 +59,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE maintenance_contracts (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
                 "place_name TEXT, location TEXT, customer_status TEXT DEFAULT 'جديد', start_date INTEGER NOT NULL, next_visit_at INTEGER NOT NULL, " +
-                "reminder_at INTEGER NOT NULL, created_at INTEGER NOT NULL)");
+                "reminder_at INTEGER NOT NULL, extinguisher_count INTEGER DEFAULT 0, detector_count INTEGER DEFAULT 0, " +
+                "bell_count INTEGER DEFAULT 0, breaker_count INTEGER DEFAULT 0, exit_count INTEGER DEFAULT 0, panel_count INTEGER DEFAULT 0, " +
+                "note TEXT, created_at INTEGER NOT NULL)");
 
         db.execSQL("CREATE TABLE customer_attachments (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
@@ -126,6 +128,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (oldVersion < 13) {
             createInstallations(db);
             createSettings(db);
+        }
+        if (oldVersion < 14) {
+            addMaintenanceDetailColumns(db);
         }
     }
 
@@ -376,6 +381,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         addColumnIfMissing(db, "safety_certificates", "customer_status", "TEXT DEFAULT 'جديد'");
         addColumnIfMissing(db, "technical_reports", "customer_status", "TEXT DEFAULT 'جديد'");
         addColumnIfMissing(db, "maintenance_contracts", "customer_status", "TEXT DEFAULT 'جديد'");
+    }
+
+    private void addMaintenanceDetailColumns(SQLiteDatabase db) {
+        addColumnIfMissing(db, "maintenance_contracts", "extinguisher_count", "INTEGER DEFAULT 0");
+        addColumnIfMissing(db, "maintenance_contracts", "detector_count", "INTEGER DEFAULT 0");
+        addColumnIfMissing(db, "maintenance_contracts", "bell_count", "INTEGER DEFAULT 0");
+        addColumnIfMissing(db, "maintenance_contracts", "breaker_count", "INTEGER DEFAULT 0");
+        addColumnIfMissing(db, "maintenance_contracts", "exit_count", "INTEGER DEFAULT 0");
+        addColumnIfMissing(db, "maintenance_contracts", "panel_count", "INTEGER DEFAULT 0");
+        addColumnIfMissing(db, "maintenance_contracts", "note", "TEXT");
     }
 
     private void createAttachments(SQLiteDatabase db) {
