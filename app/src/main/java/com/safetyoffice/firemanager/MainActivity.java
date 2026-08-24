@@ -82,6 +82,8 @@ public class MainActivity extends Activity {
     private static final int EXTINGUISHER_CAMERA_REQUEST = 5048;
     private static final int CAMERA_PERMISSION_REQUEST = 5049;
     private static final int ATTACHMENT_CAMERA_REQUEST = 5050;
+    private static final int INSTALLATION_IMAGE_REQUEST = 5051;
+    private static final int INSTALLATION_CAMERA_REQUEST = 5052;
     private static final String TEAM_CHANNEL_ID = "team_assignments";
     private static final int BRAND = Color.rgb(15, 23, 42);
     private static final int BRAND_DARK = Color.rgb(2, 6, 23);
@@ -97,6 +99,7 @@ public class MainActivity extends Activity {
     private SyncManager sync;
     private boolean appUpdateChecked;
     private boolean appVersionPublished;
+    private boolean updatePromptShown;
     private boolean assignmentsAutoPulled;
     private ListenerRegistration assignmentListener;
     private String activeAssignmentListenerTeamCode = "";
@@ -120,6 +123,13 @@ public class MainActivity extends Activity {
     private String pendingAttachmentLocation = "";
     private String pendingAttachmentStage = "";
     private boolean cameraForAttachment;
+    private boolean cameraForInstallation;
+    private long pendingInstallationId = 0;
+    private String pendingInstallationName = "";
+    private String pendingInstallationPhone = "";
+    private String pendingInstallationPlace = "";
+    private String pendingInstallationLocation = "";
+    private String pendingInstallationStage = "";
     private String pendingExtinguisherImageUri = "";
     private Uri pendingCameraImageUri;
     private final ArrayList<String> pendingExtinguisherImageUris = new ArrayList<>();
@@ -165,6 +175,15 @@ public class MainActivity extends Activity {
         } else if (requestCode == EXTINGUISHER_CAMERA_REQUEST && resultCode == RESULT_OK && pendingCameraImageUri != null) {
             addPendingExtinguisherImage(pendingCameraImageUri.toString());
             toast("تم حفظ صورة الكاميرا للطفاية");
+        } else if (requestCode == INSTALLATION_IMAGE_REQUEST && resultCode == RESULT_OK && data != null) {
+            int added = saveInstallationImageIntent(data);
+            if (added == 0) toast("لم يتم اختيار صورة");
+            else toast(added > 1 ? "تم حفظ " + added + " صور للتركيب" : "تم حفظ صورة التركيب");
+            refreshPendingInstallationCustomer();
+        } else if (requestCode == INSTALLATION_CAMERA_REQUEST && resultCode == RESULT_OK && pendingCameraImageUri != null) {
+            saveInstallationImageUri(pendingCameraImageUri);
+            toast("تم حفظ صورة التركيب");
+            refreshPendingInstallationCustomer();
         } else if (requestCode == VOICE_REQUEST && resultCode == RESULT_OK && data != null) {
             ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
             if (matches != null && !matches.isEmpty()) {
@@ -207,7 +226,8 @@ public class MainActivity extends Activity {
         } else if (requestCode == CAMERA_PERMISSION_REQUEST) {
             boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             if (granted) {
-                if (cameraForAttachment) takeAttachmentPhoto();
+                if (cameraForInstallation) takeInstallationPhoto();
+                else if (cameraForAttachment) takeAttachmentPhoto();
                 else takeExtinguisherPhoto();
             }
             else toast("لازم تسمح للتطبيق بالكاميرا علشان التصوير يشتغل");
@@ -348,13 +368,15 @@ public class MainActivity extends Activity {
     }
 
     private void syncAppVersionState() {
-        if (sync == null || sync.user() == null) return;
-        if (isSupervisorUser() && !appVersionPublished) {
+        if (sync == null) return;
+        if (!appUpdateChecked) {
+            appUpdateChecked = true;
+            sync.checkHostedRequiredUpdate(appVersionCode(), this::showRequiredUpdateOnce);
+            if (sync.user() != null) sync.checkRequiredUpdate(appVersionCode(), this::showRequiredUpdateOnce);
+        }
+        if (sync.user() != null && isSupervisorUser() && !appVersionPublished) {
             appVersionPublished = true;
             sync.publishRequiredUpdate(appVersionCode(), appVersionName());
-        } else if (isTechnicianUser() && !appUpdateChecked) {
-            appUpdateChecked = true;
-            sync.checkRequiredUpdate(appVersionCode(), this::showRequiredUpdate);
         }
         autoPullAssignmentsIfNeeded();
         startAssignmentListenerIfNeeded();
@@ -439,6 +461,12 @@ public class MainActivity extends Activity {
                     }
                 })
                 .show();
+    }
+
+    private void showRequiredUpdateOnce(String versionName, String apkUrl) {
+        if (updatePromptShown) return;
+        updatePromptShown = true;
+        showRequiredUpdate(versionName, apkUrl);
     }
 
     private void showTasks() {
@@ -919,10 +947,13 @@ public class MainActivity extends Activity {
                 () -> confirmDeleteCustomer(oldName, oldPhone, oldPlace, oldLocation));
         if (isTechnicianUser()) actionButton("إضافة صور", Color.rgb(124, 58, 237), () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
         else secondaryButton("إضافة صورة/مرفق", () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
+        if (isTechnicianUser()) actionButton("إضافة تركيب", Color.rgb(14, 165, 233), () -> showAddInstallationPage(oldName, oldPhone, oldPlace, oldLocation));
+        else secondaryButton("إضافة تركيب", () -> showAddInstallationPage(oldName, oldPhone, oldPlace, oldLocation));
         secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
 
         section("كل بيانات العميل");
         listCustomerRecords(oldName, oldPhone, oldPlace, oldLocation);
+        listCustomerInstallations(oldName, oldPhone, oldPlace, oldLocation);
         listCustomerAttachments(oldName, oldPhone, oldPlace, oldLocation);
     }
 
@@ -1042,6 +1073,42 @@ public class MainActivity extends Activity {
         };
     }
 
+    private String[] installationTypes() {
+        String raw = db.setting("installation_types", defaultInstallationTypesText());
+        String[] parts = raw.split("[\\n،,;|]+");
+        ArrayList<String> values = new ArrayList<>();
+        for (String part : parts) {
+            String clean = part.trim();
+            if (!clean.isEmpty() && !values.contains(clean)) values.add(clean);
+        }
+        if (values.isEmpty()) {
+            for (String part : defaultInstallationTypesText().split("\\n")) values.add(part);
+        }
+        return values.toArray(new String[0]);
+    }
+
+    private String defaultInstallationTypesText() {
+        return "كاشف عادي\n" +
+                "كاشف زيتا\n" +
+                "كاشف ادريسبول\n" +
+                "جرس\n" +
+                "كاسر\n" +
+                "Exit\n" +
+                "لوحة إنذار حريق\n" +
+                "طفاية";
+    }
+
+    private int installationTypeColor(String type) {
+        String value = emptyForDb(type);
+        if (value.contains("كاشف")) return Color.rgb(37, 99, 235);
+        if (value.contains("جرس")) return Color.rgb(220, 38, 38);
+        if (value.contains("كاسر")) return Color.rgb(234, 88, 12);
+        if (value.toLowerCase(Locale.US).contains("exit")) return Color.rgb(22, 163, 74);
+        if (value.contains("لوحة")) return Color.rgb(124, 58, 237);
+        if (value.contains("طفاية")) return Color.rgb(245, 158, 11);
+        return Color.rgb(15, 118, 110);
+    }
+
     private void listCustomerRecords(String name, String phone, String place, String location) {
         String[] args = customerArgs(name, phone, place, location);
         Cursor e = db.raw("SELECT id, extinguisher_type, weight, count, total_price, sticker_date, reminder_at, image_uri, delivered_again, IFNULL(paid_amount,0) FROM extinguishers " +
@@ -1084,6 +1151,140 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void showAddInstallationPage(String name, String phone, String place, String location) {
+        currentTab = "installation_add";
+        clear();
+        section("إضافة تركيب");
+        card(name, "اختر البند اللي الفني ركبه، وبعد الحفظ ضيف صوره لوحده.");
+        EditText itemType = input("نوع التركيب", InputType.TYPE_CLASS_TEXT);
+        EditText itemNumber = input("رقم القطعة / العدد", numberType());
+        itemNumber.setText("1");
+        EditText subtype = input("النوع التفصيلي", InputType.TYPE_CLASS_TEXT);
+        EditText note = input("ملاحظات", InputType.TYPE_CLASS_TEXT);
+        note.setSingleLine(false);
+        note.setMinLines(2);
+
+        section("اختيار سريع");
+        for (String type : installationTypes()) {
+            actionButton(type, installationTypeColor(type), () -> {
+                itemType.setText(type);
+                itemType.setSelection(itemType.getText().length());
+                if (emptyForDb(txt(subtype)).isEmpty() && type.contains("كاشف")) subtype.setText(type.replace("كاشف", "").trim());
+            });
+        }
+        button("حفظ بند التركيب", () -> {
+            if (empty(itemType)) return;
+            ContentValues cv = new ContentValues();
+            cv.put("customer_name", name);
+            cv.put("phone", emptyForDb(phone));
+            cv.put("place_name", emptyForDb(place));
+            cv.put("location", emptyForDb(location));
+            cv.put("customer_status", customerStatus(name, phone, place, location));
+            cv.put("item_type", txt(itemType));
+            cv.put("item_number", parseInt(txt(itemNumber), 1));
+            cv.put("subtype", txt(subtype));
+            cv.put("note", txt(note));
+            cv.put("created_at", System.currentTimeMillis());
+            long id = db.insert("installation_items", cv);
+            afterSave("تم حفظ بند التركيب");
+            pendingInstallationId = id;
+            setPendingInstallationCustomer(name, phone, place, location, "بعد التنفيذ");
+            chooseInstallationImage(name, phone, place, location, id, "بعد التنفيذ");
+        });
+        secondaryButton("رجوع لصفحة العميل", () -> openCustomerDetails(name, phone, place, location));
+    }
+
+    private void listCustomerInstallations(String name, String phone, String place, String location) {
+        section("التركيبات");
+        Cursor c = db.raw("SELECT id, item_type, item_number, IFNULL(subtype,''), IFNULL(note,''), created_at FROM installation_items " +
+                        "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC",
+                customerArgs(name, phone, place, location));
+        boolean any = false;
+        try {
+            while (c.moveToNext()) {
+                any = true;
+                long id = c.getLong(0);
+                String type = safe(c.getString(1));
+                int number = c.getInt(2);
+                String subtype = safe(c.getString(3));
+                String note = safe(c.getString(4));
+                card(type + " رقم " + number,
+                        "النوع التفصيلي: " + blankDash(subtype) +
+                                "\nملاحظات: " + blankDash(note) +
+                                "\nتاريخ الإضافة: " + ReminderScheduler.formatDate(c.getLong(5)));
+                listInstallationImages(id, name, phone, place, location);
+                actionButton("إضافة صور لهذا البند", Color.rgb(14, 165, 233),
+                        () -> chooseInstallationImage(name, phone, place, location, id, "بعد التنفيذ"));
+                secondaryButton("مشاركة هذا البند واتساب", () -> shareInstallationToWhatsApp(type, number, subtype, note, id, name, phone, place, location));
+                if (isSupervisorUser()) secondaryButton("حذف بند التركيب", () -> confirmDeleteInstallation(id, name, phone, place, location));
+            }
+        } finally {
+            c.close();
+        }
+        if (!any) small("لا توجد تركيبات مسجلة للعميل حتى الآن.");
+    }
+
+    private void listInstallationImages(long installationId, String name, String phone, String place, String location) {
+        Cursor c = db.raw("SELECT id, uri, IFNULL(stage,''), created_at FROM installation_images WHERE installation_id=? ORDER BY created_at DESC",
+                String.valueOf(installationId));
+        try {
+            while (c.moveToNext()) {
+                long id = c.getLong(0);
+                String uri = c.getString(1);
+                String stage = emptyForDb(c.getString(2));
+                card(stage.isEmpty() ? "صورة تركيب" : "صورة " + stage,
+                        "وقت التصوير/الإضافة: " + ReminderScheduler.formatDate(c.getLong(3)));
+                if (looksLikeImage(uri)) imagePreview(uri);
+                secondaryButton("فتح الصورة", () -> openAttachment(uri));
+                secondaryButton("حذف الصورة", () -> confirmDeleteInstallationImage(id, name, phone, place, location));
+            }
+        } finally {
+            c.close();
+        }
+    }
+
+    private ArrayList<String> installationImageUris(long installationId) {
+        ArrayList<String> images = new ArrayList<>();
+        Cursor c = db.raw("SELECT uri FROM installation_images WHERE installation_id=? ORDER BY created_at ASC",
+                String.valueOf(installationId));
+        try {
+            while (c.moveToNext()) {
+                String uri = emptyForDb(c.getString(0));
+                if (!uri.isEmpty() && looksLikeImage(uri) && !images.contains(uri)) images.add(uri);
+            }
+        } finally {
+            c.close();
+        }
+        return images;
+    }
+
+    private void confirmDeleteInstallation(long id, String name, String phone, String place, String location) {
+        new AlertDialog.Builder(this)
+                .setTitle("حذف بند التركيب")
+                .setMessage("تحب تحذف البند وصوره؟")
+                .setPositiveButton("حذف", (dialog, which) -> {
+                    db.delete("installation_images", "installation_id=?", String.valueOf(id));
+                    db.delete("installation_items", "id=?", String.valueOf(id));
+                    afterSave("تم حذف بند التركيب");
+                    openCustomerDetails(name, phone, place, location);
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
+    private void confirmDeleteInstallationImage(long id, String name, String phone, String place, String location) {
+        new AlertDialog.Builder(this)
+                .setTitle("حذف الصورة")
+                .setMessage("تحب تحذف صورة التركيب دي؟")
+                .setPositiveButton("حذف", (dialog, which) -> {
+                    db.delete("installation_images", "id=?", String.valueOf(id));
+                    afterSave("تم حذف الصورة");
+                    openCustomerDetails(name, phone, place, location);
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
     private void listCustomerAnnualRecords(String table, String dateColumn, String label, String[] args) {
         Cursor c = db.raw("SELECT " + dateColumn + ", total_price, reminder_at FROM " + table +
                 " WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC", args);
@@ -1114,6 +1315,9 @@ public class MainActivity extends Activity {
         addRows(root, "customer_attachments", "SELECT * FROM customer_attachments WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
         addRows(root, "extinguisher_images", "SELECT * FROM extinguisher_images WHERE extinguisher_id IN (" +
                 "SELECT id FROM extinguishers WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?)", args);
+        addRows(root, "installation_items", "SELECT * FROM installation_items WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+        addRows(root, "installation_images", "SELECT * FROM installation_images WHERE installation_id IN (" +
+                "SELECT id FROM installation_items WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?)", args);
         root.put("exported_at", System.currentTimeMillis());
         return root;
     }
@@ -1479,6 +1683,18 @@ public class MainActivity extends Activity {
         });
         small("كل نسبة تتحسب في تقرير الشهر على إجمالي مبلغ البند الخاص بها.");
 
+        section("أنواع التركيبات");
+        EditText installationTypes = input("أنواع التركيبات", InputType.TYPE_CLASS_TEXT);
+        installationTypes.setSingleLine(false);
+        installationTypes.setMinLines(7);
+        installationTypes.setText(db.setting("installation_types", defaultInstallationTypesText()));
+        small("اكتب كل نوع في سطر لوحده. الأنواع دي تظهر للفني كأزرار سريعة في صفحة إضافة تركيب.");
+        button("حفظ أنواع التركيبات", () -> {
+            db.setSetting("installation_types", txt(installationTypes).trim().isEmpty() ? defaultInstallationTypesText() : txt(installationTypes));
+            afterSave("تم حفظ أنواع التركيبات");
+            showSettings();
+        });
+
         section("النسخ الاحتياطي المحلي");
         card("نسخة تلقائية على الموبايل",
                 "بعد كل حفظ التطبيق بيحدث نسخة احتياطية تلقائيا.\nآخر ملف: " + LocalBackupManager.latestPath(this));
@@ -1674,6 +1890,7 @@ public class MainActivity extends Activity {
                     secondaryButton("فتح صورة الفني " + (i + 1), () -> openAttachment(uri));
                 }
             }
+            showSnapshotInstallations(item.completedSnapshot, item.customerName, item.phone, item.place, item.location);
             String status = emptyForDb(item.status);
             if ("completed".equals(status)) {
                 actionButton("اعتماد وإضافته عندي", Color.rgb(22, 163, 74), () ->
@@ -1701,6 +1918,65 @@ public class MainActivity extends Activity {
                         sync.rejectCompletedAssignment(item, () -> loadTeamInbox(teamCode)))
                 .setNegativeButton("إلغاء", null)
                 .show();
+    }
+
+    private void showSnapshotInstallations(String rawSnapshot, String customerName, String phone, String place, String location) {
+        try {
+            JSONObject root = new JSONObject(emptyForDb(rawSnapshot).isEmpty() ? "{}" : rawSnapshot);
+            JSONArray items = root.optJSONArray("installation_items");
+            if (items == null || items.length() == 0) return;
+            small("تركيبات الفني:");
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.optJSONObject(i);
+                if (item == null) continue;
+                long id = item.optLong("id", -1);
+                String type = item.optString("item_type", "-");
+                int number = item.optInt("item_number", i + 1);
+                String subtype = item.optString("subtype", "");
+                String note = item.optString("note", "");
+                card(type + " رقم " + number,
+                        "النوع: " + blankDash(subtype) +
+                                "\nملاحظات: " + blankDash(note) +
+                                "\nصور البند: " + snapshotInstallationImages(root, id).size());
+                ArrayList<String> images = snapshotInstallationImages(root, id);
+                for (int p = 0; p < images.size(); p++) {
+                    String uri = images.get(p);
+                    secondaryButton("فتح صورة " + type + " " + (p + 1), () -> openAttachment(uri));
+                }
+                secondaryButton("مشاركة " + type + " واتساب", () ->
+                        shareSnapshotInstallationToWhatsApp(type, number, subtype, note, images, customerName, phone, place, location));
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private ArrayList<String> snapshotInstallationImages(JSONObject root, long installationId) {
+        ArrayList<String> images = new ArrayList<>();
+        JSONArray rows = root.optJSONArray("installation_images");
+        if (rows == null) return images;
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row == null) continue;
+            if (installationId > 0 && row.optLong("installation_id", -2) != installationId) continue;
+            String uri = row.optString("uri", "");
+            if (!emptyForDb(uri).isEmpty() && looksLikeImage(uri) && !images.contains(uri)) images.add(uri);
+        }
+        return images;
+    }
+
+    private void shareSnapshotInstallationToWhatsApp(String type, int number, String subtype, String note, ArrayList<String> images,
+                                                     String name, String phone, String place, String location) {
+        StringBuilder out = new StringBuilder();
+        out.append("تقرير بند تركيب\n");
+        out.append("العميل: ").append(safe(name)).append("\n");
+        out.append("الرقم: ").append(safe(phone)).append("\n");
+        out.append("اسم المكان: ").append(safe(place)).append("\n");
+        if (!emptyForDb(location).isEmpty()) out.append("اللوكيشن: ").append(location).append("\n");
+        out.append("\n").append(type).append(" رقم ").append(number).append("\n");
+        if (!emptyForDb(subtype).isEmpty()) out.append("النوع: ").append(subtype).append("\n");
+        if (!emptyForDb(note).isEmpty()) out.append("ملاحظات: ").append(note).append("\n");
+        out.append("تم التنفيذ، مرفق الصور.");
+        shareTextAndImagesToWhatsApp(out.toString(), images, type + " رقم " + number);
     }
 
     private String assignmentReviewText(SyncManager.CompletedAssignment item) {
@@ -1734,6 +2010,7 @@ public class MainActivity extends Activity {
             changes += appendSnapshotDiff(out, before, after, "type", "نوع الطفاية");
             if (changes == 0) out.append("لا يوجد تعديل في العدد أو المبلغ أو الوزن أو النوع.\n");
             out.append("صور الفني: ").append(snapshotImageUris(item.completedSnapshot).size()).append("\n");
+            out.append("بنود التركيبات: ").append(snapshotArrayCount(after, "installation_items")).append("\n");
         } catch (Exception e) {
             out.append("تعذر قراءة تفاصيل التعديل.");
         }
@@ -1742,20 +2019,97 @@ public class MainActivity extends Activity {
 
     private void shareAssignmentToWhatsAppGroup(SyncManager.CompletedAssignment item) {
         String message = buildAssignmentGroupMessage(item);
-        Intent intent = new Intent(Intent.ACTION_SEND);
-        intent.setType("text/plain");
+        ArrayList<String> images = snapshotImageUris(item.completedSnapshot);
+        shareTextAndImagesToWhatsApp(message, images, "تقرير التنفيذ");
+    }
+
+    private void shareInstallationToWhatsApp(String type, int number, String subtype, String note, long installationId,
+                                             String name, String phone, String place, String location) {
+        StringBuilder out = new StringBuilder();
+        out.append("تقرير بند تركيب\n");
+        out.append("العميل: ").append(safe(name)).append("\n");
+        out.append("الرقم: ").append(safe(phone)).append("\n");
+        out.append("اسم المكان: ").append(safe(place)).append("\n");
+        if (!emptyForDb(location).isEmpty()) out.append("اللوكيشن: ").append(location).append("\n");
+        out.append("\n").append(type).append(" رقم ").append(number).append("\n");
+        if (!emptyForDb(subtype).isEmpty()) out.append("النوع: ").append(subtype).append("\n");
+        if (!emptyForDb(note).isEmpty()) out.append("ملاحظات: ").append(note).append("\n");
+        out.append("تم التنفيذ، مرفق الصور.");
+        shareTextAndImagesToWhatsApp(out.toString(), installationImageUris(installationId), type + " رقم " + number);
+    }
+
+    private void shareTextAndImagesToWhatsApp(String message, ArrayList<String> imageUris, String title) {
+        if (imageUris == null || imageUris.isEmpty()) {
+            startWhatsAppShare(message, new ArrayList<>(), title);
+            return;
+        }
+        toast("جاري تجهيز الصور للمشاركة");
+        new Thread(() -> {
+            ArrayList<Uri> streams = prepareShareUris(imageUris);
+            runOnUiThread(() -> startWhatsAppShare(message, streams, title));
+        }).start();
+    }
+
+    private void startWhatsAppShare(String message, ArrayList<Uri> streams, String title) {
+        Intent intent = new Intent(streams.isEmpty() ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE);
+        intent.setType(streams.isEmpty() ? "text/plain" : "image/*");
         intent.putExtra(Intent.EXTRA_TEXT, message);
+        if (!streams.isEmpty()) {
+            intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, streams);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        }
         intent.setPackage("com.whatsapp");
         try {
             startActivity(intent);
         } catch (Exception e) {
             try {
                 intent.setPackage(null);
-                startActivity(Intent.createChooser(intent, "مشاركة تقرير التنفيذ"));
+                startActivity(Intent.createChooser(intent, title));
             } catch (Exception ignored) {
                 toast("تعذر فتح واتساب للمشاركة");
             }
         }
+    }
+
+    private ArrayList<Uri> prepareShareUris(ArrayList<String> imageUris) {
+        ArrayList<Uri> out = new ArrayList<>();
+        File dir = new File(getFilesDir(), "whatsapp_share");
+        if (!dir.exists()) dir.mkdirs();
+        for (int i = 0; i < imageUris.size(); i++) {
+            String raw = emptyForDb(imageUris.get(i));
+            if (raw.isEmpty()) continue;
+            try {
+                if (raw.startsWith("http://") || raw.startsWith("https://")) {
+                    File file = new File(dir, "share-" + System.currentTimeMillis() + "-" + i + imageExtension(raw));
+                    InputStream input = new URL(raw).openStream();
+                    FileOutputStream output = new FileOutputStream(file);
+                    try {
+                        copyStream(input, output);
+                    } finally {
+                        input.close();
+                        output.close();
+                    }
+                    out.add(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", file));
+                } else {
+                    out.add(Uri.parse(raw));
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return out;
+    }
+
+    private void copyStream(InputStream input, FileOutputStream output) throws Exception {
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+    }
+
+    private String imageExtension(String uri) {
+        String lower = uri.toLowerCase(Locale.US);
+        if (lower.contains(".png")) return ".png";
+        if (lower.contains(".webp")) return ".webp";
+        return ".jpg";
     }
 
     private String buildAssignmentGroupMessage(SyncManager.CompletedAssignment item) {
@@ -1776,7 +2130,7 @@ public class MainActivity extends Activity {
         out.append("الفني: ").append(safe(item.completedByEmail)).append("\n");
         if (item.completedAt > 0) out.append("تاريخ التسليم: ").append(ReminderScheduler.formatDate(item.completedAt)).append("\n");
         appendWorkDetails(out, root);
-        appendBeforeAfterLinks(out, root);
+        out.append("\nعدد الصور المرفقة: ").append(snapshotImageUris(root.toString()).size()).append("\n");
         out.append("\nتم التنفيذ، برجاء مراجعة الصور والتفاصيل.");
         return out.toString();
     }
@@ -1787,6 +2141,7 @@ public class MainActivity extends Activity {
         if (snapshotArrayCount(root, "safety_certificates") > 0) types.add("شهادة سلامة");
         if (snapshotArrayCount(root, "technical_reports") > 0) types.add("تقرير فني");
         if (snapshotArrayCount(root, "maintenance_contracts") > 0) types.add("عقد صيانة");
+        if (snapshotArrayCount(root, "installation_items") > 0) types.add("تركيبات");
         return types.isEmpty() ? "شغل عام" : joinText(types);
     }
 
@@ -1807,6 +2162,21 @@ public class MainActivity extends Activity {
         appendSimpleWorkCount(out, root, "safety_certificates", "شهادات السلامة");
         appendSimpleWorkCount(out, root, "technical_reports", "التقارير الفنية");
         appendSimpleWorkCount(out, root, "maintenance_contracts", "عقود الصيانة");
+        JSONArray installations = root.optJSONArray("installation_items");
+        if (installations != null && installations.length() > 0) {
+            out.append("\n\nتفاصيل التركيبات:");
+            for (int i = 0; i < installations.length(); i++) {
+                JSONObject row = installations.optJSONObject(i);
+                if (row == null) continue;
+                out.append("\n- ").append(row.optString("item_type", "-"));
+                out.append(" رقم ").append(row.optString("item_number", "-"));
+                String subtype = row.optString("subtype", "");
+                if (!subtype.isEmpty()) out.append(" | النوع: ").append(subtype);
+                String note = row.optString("note", "");
+                if (!note.isEmpty()) out.append(" | ملاحظات: ").append(note);
+            }
+            out.append("\n");
+        }
     }
 
     private void appendSimpleWorkCount(StringBuilder out, JSONObject root, String key, String label) {
@@ -1830,6 +2200,14 @@ public class MainActivity extends Activity {
         }
         addSnapshotImagesTo(after, root.optJSONArray("extinguisher_images"), "uri");
         addSnapshotImagesTo(after, root.optJSONArray("extinguishers"), "image_uri");
+        JSONArray installationImages = root.optJSONArray("installation_images");
+        if (installationImages != null) {
+            for (int i = 0; i < installationImages.length(); i++) {
+                JSONObject row = installationImages.optJSONObject(i);
+                if (row == null) continue;
+                addUriByStage(before, after, other, row.optString("uri", ""), row.optString("stage", ""));
+            }
+        }
         appendImageSection(out, "\nصور قبل التنفيذ", before);
         appendImageSection(out, "\nصور بعد التنفيذ", after);
         appendImageSection(out, "\nمرفقات أخرى", other);
@@ -1918,6 +2296,7 @@ public class MainActivity extends Activity {
             addSnapshotImages(images, root.optJSONArray("customer_attachments"), "uri");
             addSnapshotImages(images, root.optJSONArray("extinguisher_images"), "uri");
             addSnapshotImages(images, root.optJSONArray("extinguishers"), "image_uri");
+            addSnapshotImages(images, root.optJSONArray("installation_images"), "uri");
         } catch (Exception ignored) {
         }
         return images;
@@ -2201,6 +2580,7 @@ public class MainActivity extends Activity {
 
     private void takeAttachmentPhoto() {
         cameraForAttachment = true;
+        cameraForInstallation = false;
         if (!hasCameraPermission()) {
             requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
             return;
@@ -2232,6 +2612,7 @@ public class MainActivity extends Activity {
 
     private void takeExtinguisherPhoto() {
         cameraForAttachment = false;
+        cameraForInstallation = false;
         if (!hasCameraPermission()) {
             requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
             return;
@@ -2243,6 +2624,51 @@ public class MainActivity extends Activity {
             intent.putExtra(MediaStore.EXTRA_OUTPUT, pendingCameraImageUri);
             intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivityForResult(intent, EXTINGUISHER_CAMERA_REQUEST);
+        } catch (Exception e) {
+            toast("تعذر فتح الكاميرا");
+        }
+    }
+
+    private void chooseInstallationImage(String name, String phone, String place, String location, long installationId, String defaultStage) {
+        setPendingInstallationCustomer(name, phone, place, location, defaultStage);
+        pendingInstallationId = installationId;
+        new AlertDialog.Builder(this)
+                .setTitle("صور التركيب")
+                .setItems(new String[]{"قبل التنفيذ - كاميرا", "قبل التنفيذ - معرض", "بعد التنفيذ - كاميرا", "بعد التنفيذ - معرض"}, (dialog, which) -> {
+                    pendingInstallationStage = which < 2 ? "قبل التنفيذ" : "بعد التنفيذ";
+                    if (which == 0 || which == 2) takeInstallationPhoto();
+                    else chooseInstallationFromGallery();
+                })
+                .show();
+    }
+
+    private void chooseInstallationFromGallery() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, INSTALLATION_IMAGE_REQUEST);
+        } catch (Exception e) {
+            toast("تعذر فتح اختيار الصورة");
+        }
+    }
+
+    private void takeInstallationPhoto() {
+        cameraForAttachment = false;
+        cameraForInstallation = true;
+        if (!hasCameraPermission()) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
+            return;
+        }
+        try {
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            File photo = createCameraImageFile("InstallationPhotos", "installation-");
+            pendingCameraImageUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", photo);
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, pendingCameraImageUri);
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent, INSTALLATION_CAMERA_REQUEST);
         } catch (Exception e) {
             toast("تعذر فتح الكاميرا");
         }
@@ -2316,6 +2742,46 @@ public class MainActivity extends Activity {
         cv.put("created_at", System.currentTimeMillis());
         db.insert("customer_attachments", cv);
         afterSave("تم حفظ المرفق مع العميل");
+    }
+
+    private int saveInstallationImageIntent(Intent data) {
+        int added = 0;
+        ClipData clipData = data.getClipData();
+        if (clipData != null) {
+            for (int i = 0; i < clipData.getItemCount(); i++) {
+                saveInstallationImageUri(clipData.getItemAt(i).getUri());
+                added++;
+            }
+        } else if (data.getData() != null) {
+            saveInstallationImageUri(data.getData());
+            added++;
+        }
+        return added;
+    }
+
+    private void saveInstallationImageUri(Uri uri) {
+        if (pendingInstallationId <= 0 || uri == null) return;
+        String savedUri = persistReadableUri(uri);
+        if (savedUri.isEmpty()) savedUri = uri.toString();
+        ContentValues cv = new ContentValues();
+        cv.put("installation_id", pendingInstallationId);
+        cv.put("uri", savedUri);
+        cv.put("stage", pendingInstallationStage);
+        cv.put("created_at", System.currentTimeMillis());
+        db.insert("installation_images", cv);
+        afterSave("تم حفظ صورة التركيب");
+    }
+
+    private void setPendingInstallationCustomer(String name, String phone, String place, String location, String stage) {
+        pendingInstallationName = name;
+        pendingInstallationPhone = phone;
+        pendingInstallationPlace = place;
+        pendingInstallationLocation = location;
+        pendingInstallationStage = stage;
+    }
+
+    private void refreshPendingInstallationCustomer() {
+        openCustomerDetails(pendingInstallationName, pendingInstallationPhone, pendingInstallationPlace, pendingInstallationLocation);
     }
 
     private void refreshPendingAttachmentCustomer() {
@@ -3485,6 +3951,16 @@ public class MainActivity extends Activity {
 
     private int integer(EditText et) {
         return (int) Math.round(parseNumber(txt(et)));
+    }
+
+    private int parseInt(String value, int fallback) {
+        try {
+            String clean = normalizeDigits(emptyForDb(value)).replaceAll("[^0-9-]", "");
+            if (clean.isEmpty()) return fallback;
+            return Integer.parseInt(clean);
+        } catch (Exception e) {
+            return fallback;
+        }
     }
 
     private void startVoiceInput(EditText target) {

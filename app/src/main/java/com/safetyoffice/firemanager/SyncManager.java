@@ -45,6 +45,7 @@ public class SyncManager {
     private static final String IMAGE_UPLOAD_TOKEN = "FireManager_smmnoon_2026_7391";
     private static final String DEFAULT_SUPERVISOR_EMAIL = "mohamede669@gmail.com";
     private static final String UPDATE_APK_URL = "https://smmnoon.com/fire/fire-salary-manager.apk";
+    private static final String UPDATE_CONFIG_URL = "https://smmnoon.com/fire/version.json";
     private final Context context;
     private final DatabaseHelper db;
     private final FirebaseAuth auth;
@@ -121,6 +122,31 @@ public class SyncManager {
                     String apkUrl = doc.getString("apk_url");
                     if (listener != null) listener.onUpdateRequired(versionName, apkUrl == null ? UPDATE_APK_URL : apkUrl);
                 });
+    }
+
+    public void checkHostedRequiredUpdate(int currentVersionCode, UpdateListener listener) {
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                connection = (HttpURLConnection) new URL(UPDATE_CONFIG_URL).openConnection();
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(12000);
+                connection.setRequestMethod("GET");
+                int code = connection.getResponseCode();
+                if (code < 200 || code >= 300) return;
+                JSONObject json = new JSONObject(readAll(connection.getInputStream()));
+                long minVersion = json.optLong("min_version_code", 0);
+                if (minVersion <= currentVersionCode) return;
+                String versionName = json.optString("version_name", "");
+                String apkUrl = json.optString("apk_url", UPDATE_APK_URL);
+                runOnMain(() -> {
+                    if (listener != null) listener.onUpdateRequired(versionName, apkUrl);
+                });
+            } catch (Exception ignored) {
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }).start();
     }
 
     public interface UpdateListener {
@@ -731,6 +757,7 @@ public class SyncManager {
         collectLocalMedia(refs, "extinguishers", "image_uri");
         collectLocalMedia(refs, "extinguisher_images", "uri");
         collectLocalMedia(refs, "customer_attachments", "uri");
+        collectLocalMedia(refs, "installation_images", "uri");
         return refs;
     }
 

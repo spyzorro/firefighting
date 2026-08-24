@@ -16,12 +16,13 @@ import java.util.Map;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String DB_NAME = "fire_salary_manager.db";
-    public static final int DB_VERSION = 12;
+    public static final int DB_VERSION = 13;
 
     private static final List<String> TABLES = Arrays.asList(
             "employees", "advances", "customers", "extinguishers",
             "safety_certificates", "technical_reports", "maintenance_contracts",
-            "customer_attachments", "extinguisher_images", "tasks", "settings"
+            "customer_attachments", "extinguisher_images", "installation_items",
+            "installation_images", "tasks", "settings"
     );
 
     public DatabaseHelper(Context context) {
@@ -65,6 +66,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "place_name TEXT, location TEXT, title TEXT, uri TEXT NOT NULL, stage TEXT DEFAULT '', created_at INTEGER NOT NULL)");
 
         createExtinguisherImages(db);
+        createInstallations(db);
 
         db.execSQL("CREATE TABLE tasks (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, note TEXT, " +
@@ -120,6 +122,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (oldVersion < 12) {
             createAttachments(db);
             addColumnIfMissing(db, "customer_attachments", "stage", "TEXT DEFAULT ''");
+        }
+        if (oldVersion < 13) {
+            createInstallations(db);
+            createSettings(db);
         }
     }
 
@@ -221,7 +227,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         try {
             db.execSQL("DELETE FROM extinguisher_images WHERE extinguisher_id IN (" +
                     "SELECT id FROM extinguishers WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?)", args);
+            db.execSQL("DELETE FROM installation_images WHERE installation_id IN (" +
+                    "SELECT id FROM installation_items WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?)", args);
             db.delete("extinguishers", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
+            db.delete("installation_items", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
             db.delete("customers", "name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
             db.delete("safety_certificates", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
             db.delete("technical_reports", "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?", args);
@@ -259,6 +268,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             updateCustomerTable(db, "safety_certificates", oldName, oldPhone, oldPlace, oldLocation, newName, newPhone, newPlace, newLocation);
             updateCustomerTable(db, "technical_reports", oldName, oldPhone, oldPlace, oldLocation, newName, newPhone, newPlace, newLocation);
             updateCustomerTable(db, "maintenance_contracts", oldName, oldPhone, oldPlace, oldLocation, newName, newPhone, newPlace, newLocation);
+            updateCustomerTable(db, "installation_items", oldName, oldPhone, oldPlace, oldLocation, newName, newPhone, newPlace, newLocation);
             updateAttachmentCustomer(db, oldName, oldPhone, oldPlace, oldLocation, newName, newPhone, newPlace, newLocation);
             db.setTransactionSuccessful();
         } finally {
@@ -275,6 +285,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             updateStatus(db, "safety_certificates", "customer_name", name, phone, place, location, status);
             updateStatus(db, "technical_reports", "customer_name", name, phone, place, location, status);
             updateStatus(db, "maintenance_contracts", "customer_name", name, phone, place, location, status);
+            updateStatus(db, "installation_items", "customer_name", name, phone, place, location, status);
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
@@ -319,6 +330,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         insertDefaultSetting(db, "report_percent", "0");
         insertDefaultSetting(db, "auto_save_contacts", "0");
         insertDefaultSetting(db, "team_code", "");
+        insertDefaultSetting(db, "installation_types", defaultInstallationTypes());
         insertDefaultSetting(db, "selected_whatsapp_template", "0");
         insertDefaultSetting(db, "whatsapp_templates", defaultWhatsappTemplates());
     }
@@ -378,6 +390,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "uri TEXT NOT NULL, created_at INTEGER NOT NULL)");
     }
 
+    private void createInstallations(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS installation_items (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT, " +
+                "place_name TEXT, location TEXT, customer_status TEXT DEFAULT 'جديد', " +
+                "item_type TEXT NOT NULL, item_number INTEGER DEFAULT 1, subtype TEXT, note TEXT, created_at INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS installation_images (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, installation_id INTEGER NOT NULL, " +
+                "uri TEXT NOT NULL, stage TEXT DEFAULT '', created_at INTEGER NOT NULL)");
+    }
+
     private void migrateLegacyExtinguisherImages(SQLiteDatabase db) {
         Cursor c = db.rawQuery("SELECT id, image_uri FROM extinguishers WHERE IFNULL(image_uri,'')<>''", null);
         try {
@@ -417,6 +439,17 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         return "تحياتنا وتقديرنا لك {name}\nحبيت أذكركم إن موعد انتهاء شهادة/استيكر الطفايات قرب، وعدد الطفايات المسجلة عندكم {count} طفاية. ودي فرصة نرتب زيارة صيانة في الوقت اللي يناسبكم عشان نتأكد إن كل شي جاهز وآمن.\nالله يعطيكم العافية.|||" +
                 "تحياتنا لك {name}\nنذكركم بقرب موعد متابعة الطفايات، وعددها عندكم {count} طفاية. فضلا حددوا لنا وقت مناسب للزيارة والصيانة، وبإذن الله نخدمكم بالشكل اللي يرضيكم.\nشاكرين لكم تعاونكم.|||" +
                 "تحياتنا وتقديرنا\nعندكم {count} طفاية مسجلة لدينا، وموعد شهادة/استيكر الطفايات قرب ينتهي. نحتاج ننسق معكم موعد زيارة صيانة مناسب، وربي يبارك لكم.";
+    }
+
+    private String defaultInstallationTypes() {
+        return "كاشف عادي\n" +
+                "كاشف زيتا\n" +
+                "كاشف ادريسبول\n" +
+                "جرس\n" +
+                "كاسر\n" +
+                "Exit\n" +
+                "لوحة إنذار حريق\n" +
+                "طفاية";
     }
 
     private void addColumnIfMissing(SQLiteDatabase db, String table, String column, String definition) {
@@ -505,6 +538,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             Map<Long, Long> extinguisherIds = new HashMap<>();
+            Map<Long, Long> installationIds = new HashMap<>();
             for (String table : TABLES) {
                 if ("settings".equals(table) || !root.has(table)) continue;
                 JSONArray rows = root.getJSONArray(table);
@@ -521,6 +555,17 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                         if (oldExtinguisherId > 0 && !extinguisherIds.containsKey(oldExtinguisherId)) continue;
                         ContentValues cv = rowValues(row, "id");
                         if (oldExtinguisherId > 0) cv.put("extinguisher_id", extinguisherIds.get(oldExtinguisherId));
+                        db.insert(table, null, cv);
+                    } else if ("installation_items".equals(table)) {
+                        long oldId = row.optLong("id", -1);
+                        ContentValues cv = rowValues(row, "id");
+                        long newId = db.insert(table, null, cv);
+                        if (oldId > 0 && newId > 0) installationIds.put(oldId, newId);
+                    } else if ("installation_images".equals(table)) {
+                        long oldInstallationId = row.optLong("installation_id", -1);
+                        if (oldInstallationId > 0 && !installationIds.containsKey(oldInstallationId)) continue;
+                        ContentValues cv = rowValues(row, "id");
+                        if (oldInstallationId > 0) cv.put("installation_id", installationIds.get(oldInstallationId));
                         db.insert(table, null, cv);
                     } else {
                         db.insert(table, null, rowValues(row, "id"));
