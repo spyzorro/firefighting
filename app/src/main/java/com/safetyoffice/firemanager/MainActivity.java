@@ -654,7 +654,7 @@ public class MainActivity extends Activity {
         EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
         EditText customerStatus = hiddenInput("حالة العميل");
-        customerStatus.setText("جاري الصيانة");
+        customerStatus.setText("تم الاستلام");
         statusInputBar(customerStatus);
         EditText deliveredAgain = hiddenInput("استلم الطفايات تاني؟ نعم/لا");
         deliveredAgain.setText("لا");
@@ -714,7 +714,7 @@ public class MainActivity extends Activity {
         if (empty(customer) || empty(count) || empty(price) || empty(date)) return;
         try {
             ReminderScheduler.parseDate(txt(date));
-            String status = txt(customerStatus).isEmpty() ? "جاري الصيانة" : txt(customerStatus);
+            String status = txt(customerStatus).isEmpty() ? "تم الاستلام" : txt(customerStatus);
             double remaining = Math.max(0, dbl(price) - dbl(paid));
             String summary = txt(customer) +
                     "\nرقم: " + txt(phone) +
@@ -757,7 +757,7 @@ public class MainActivity extends Activity {
         try {
             long stickerDate = ReminderScheduler.parseDate(txt(date));
             long reminder = ReminderScheduler.stickerReminder(stickerDate);
-            String status = txt(customerStatus).isEmpty() ? "جاري الصيانة" : txt(customerStatus);
+            String status = txt(customerStatus).isEmpty() ? "تم الاستلام" : txt(customerStatus);
 
             ContentValues ccv = new ContentValues();
             ccv.put("name", txt(customer));
@@ -834,7 +834,9 @@ public class MainActivity extends Activity {
         section("فلترة حسب نوع الشغل");
         workFilterBar();
 
-        String sql = "SELECT customer_name, phone, place_name, location, customer_status, SUM(total_count) total_count, SUM(total_price) total_price " +
+        String sql = "SELECT customer_name, phone, place_name, location, " +
+                "SUBSTR(MAX(printf('%013d', last_at) || customer_status), 14) customer_status, " +
+                "SUM(total_count) total_count, SUM(total_price) total_price " +
                 "FROM (" +
                 "SELECT name customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, 0 total_price, created_at last_at, 'عميل' work_type FROM customers " +
                 "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, SUM(count) total_count, SUM(total_price) total_price, MAX(created_at) last_at, 'طفايات' work_type FROM extinguishers GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
@@ -858,7 +860,7 @@ public class MainActivity extends Activity {
             sql += "AND work_type=? ";
             args.add(customerWorkFilter);
         }
-        sql += "GROUP BY customer_name, phone, place_name, location, customer_status ORDER BY MAX(last_at) DESC";
+        sql += "GROUP BY customer_name, phone, place_name, location ORDER BY MAX(last_at) DESC";
         Cursor c = db.raw(sql, args.toArray(new String[0]));
         try {
             while (c.moveToNext()) {
@@ -1148,7 +1150,7 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         filterStatusButton(row, "كل الحالات", "");
-        for (String status : customerStatuses()) filterStatusButton(row, status, status);
+        for (String status : visibleCustomerStatuses()) filterStatusButton(row, status, status);
         hsv.addView(row);
         LinearLayout.LayoutParams lp = matchWrap();
         lp.setMargins(0, dp(2), 0, dp(8));
@@ -1199,6 +1201,7 @@ public class MainActivity extends Activity {
                 workType.equals(customerWorkFilter) ? ACCENT : Color.rgb(203, 213, 225), dp(16)));
         b.setOnClickListener(v -> {
             customerWorkFilter = workType;
+            customerStatusFilter = "";
             showCustomers();
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
@@ -1216,12 +1219,28 @@ public class MainActivity extends Activity {
     private String[] customerStatuses() {
         return new String[]{
                 "جديد",
+                "جاري العمل",
+                "تم التسليم",
+                "تم الاستلام",
                 "استلام الطفايات",
                 "تسليم الطفايات",
                 "تسليم جزئي",
+                "تم التسليم جزئي",
+                "تم الانتهاء",
                 "جاري الصيانة",
-                "انتظار التحصيل"
+                "انتظار التحصيل",
+                "تم التحصيل"
         };
+    }
+
+    private String[] visibleCustomerStatuses() {
+        if ("تركيبات".equals(customerWorkFilter)) {
+            return new String[]{"جاري العمل", "تم التسليم"};
+        }
+        if ("طفايات".equals(customerWorkFilter)) {
+            return new String[]{"تم الاستلام", "تم التسليم جزئي", "تم الانتهاء", "جاري الصيانة", "انتظار التحصيل", "تم التحصيل"};
+        }
+        return customerStatuses();
     }
 
     private String[] installationTypes() {
@@ -1320,7 +1339,7 @@ public class MainActivity extends Activity {
             cv.put("phone", emptyForDb(phone));
             cv.put("place_name", emptyForDb(place));
             cv.put("location", emptyForDb(location));
-            cv.put("customer_status", customerStatus(name, phone, place, location));
+            cv.put("customer_status", "جاري العمل");
             cv.put("item_type", cleanType);
             cv.put("item_number", i);
             cv.put("subtype", emptyForDb(subtype));
@@ -2385,7 +2404,7 @@ public class MainActivity extends Activity {
             String status = emptyForDb(item.status);
             if ("completed".equals(status)) {
                 actionButton("اعتماد وإضافته عندي", Color.rgb(22, 163, 74), () ->
-                        sync.approveCompletedAssignment(item, () -> loadTeamInbox(teamCode)));
+                        sync.approveCompletedAssignment(item, () -> afterApproveCompletedAssignment(item, teamCode)));
                 secondaryButton("رفض التحديث", () -> confirmRejectCompletedAssignment(item, teamCode));
             } else if ("open".equals(status)) {
                 small("التكليف لسه عند الفني ولم يتم تسليمه للمشرف.");
@@ -2409,6 +2428,118 @@ public class MainActivity extends Activity {
                         sync.rejectCompletedAssignment(item, () -> loadTeamInbox(teamCode)))
                 .setNegativeButton("إلغاء", null)
                 .show();
+    }
+
+    private void afterApproveCompletedAssignment(SyncManager.CompletedAssignment item, String teamCode) {
+        updateApprovedWorkStatuses(item);
+        if (snapshotHas(item.completedSnapshot, "extinguishers")) {
+            showCollectionChoice(item, teamCode);
+        } else {
+            loadTeamInbox(teamCode);
+        }
+    }
+
+    private void updateApprovedWorkStatuses(SyncManager.CompletedAssignment item) {
+        String snapshot = emptyForDb(item.completedSnapshot);
+        String name = emptyForDb(item.customerName);
+        String phone = emptyForDb(item.phone);
+        String place = emptyForDb(item.place);
+        String location = emptyForDb(item.location);
+        if (snapshotHas(snapshot, "installation_items")) {
+            updateCustomerWorkStatus("installation_items", name, phone, place, location, "تم التسليم");
+        }
+        if (snapshotHas(snapshot, "extinguishers")) {
+            updateCustomerWorkStatus("extinguishers", name, phone, place, location, "تم الانتهاء");
+        }
+        if (snapshotHas(snapshot, "maintenance_contracts")) {
+            updateCustomerWorkStatus("maintenance_contracts", name, phone, place, location, "تم التسليم");
+        }
+    }
+
+    private boolean snapshotHas(String rawSnapshot, String key) {
+        try {
+            JSONObject root = new JSONObject(emptyForDb(rawSnapshot).isEmpty() ? "{}" : rawSnapshot);
+            return snapshotArrayCount(root, key) > 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void updateCustomerWorkStatus(String table, String name, String phone, String place, String location, String status) {
+        ContentValues cv = new ContentValues();
+        cv.put("customer_status", status);
+        db.update(table, cv, "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+    }
+
+    private void showCollectionChoice(SyncManager.CompletedAssignment item, String teamCode) {
+        new AlertDialog.Builder(this)
+                .setTitle("تم التحصيل؟")
+                .setMessage("اختار حالة التحصيل بعد اعتماد شغل الفني.")
+                .setPositiveButton("تحصيل كامل", (dialog, which) -> {
+                    setExtinguisherPaidFull(item.customerName, item.phone, item.place, item.location);
+                    updateCustomerWorkStatus("extinguishers", item.customerName, item.phone, item.place, item.location, "تم التحصيل");
+                    afterSave("تم تسجيل التحصيل كامل");
+                    loadTeamInbox(teamCode);
+                })
+                .setNegativeButton("تحصيل جزئي", (dialog, which) -> showPartialCollectionAmount(item, teamCode))
+                .setNeutralButton("لاحقا", (dialog, which) -> loadTeamInbox(teamCode))
+                .show();
+    }
+
+    private void showPartialCollectionAmount(SyncManager.CompletedAssignment item, String teamCode) {
+        EditText amount = new EditText(this);
+        amount.setHint("المبلغ المحصل بالريال");
+        amount.setInputType(numberType());
+        amount.setTextColor(TEXT);
+        amount.setGravity(Gravity.RIGHT);
+        new AlertDialog.Builder(this)
+                .setTitle("تحصيل جزئي")
+                .setView(amount)
+                .setPositiveButton("حفظ المبلغ", (dialog, which) -> {
+                    setExtinguisherPaidPartial(item.customerName, item.phone, item.place, item.location, parseNumber(amount.getText().toString()));
+                    updateCustomerWorkStatus("extinguishers", item.customerName, item.phone, item.place, item.location, "انتظار التحصيل");
+                    afterSave("تم تسجيل التحصيل الجزئي");
+                    loadTeamInbox(teamCode);
+                })
+                .setNegativeButton("إلغاء", (dialog, which) -> loadTeamInbox(teamCode))
+                .show();
+    }
+
+    private void setExtinguisherPaidFull(String name, String phone, String place, String location) {
+        Cursor c = db.raw("SELECT id, total_price FROM extinguishers WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?",
+                customerArgs(name, phone, place, location));
+        try {
+            while (c.moveToNext()) {
+                ContentValues cv = new ContentValues();
+                cv.put("paid_amount", c.getDouble(1));
+                db.update("extinguishers", cv, "id=?", String.valueOf(c.getLong(0)));
+            }
+        } finally {
+            c.close();
+        }
+    }
+
+    private void setExtinguisherPaidPartial(String name, String phone, String place, String location, double paidAmount) {
+        double remaining = Math.max(0, paidAmount);
+        ContentValues reset = new ContentValues();
+        reset.put("paid_amount", 0);
+        db.update("extinguishers", reset, "customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+        Cursor c = db.raw("SELECT id, total_price FROM extinguishers WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? ORDER BY created_at DESC",
+                customerArgs(name, phone, place, location));
+        try {
+            while (c.moveToNext()) {
+                double value = Math.min(remaining, Math.max(0, c.getDouble(1)));
+                ContentValues cv = new ContentValues();
+                cv.put("paid_amount", value);
+                db.update("extinguishers", cv, "id=?", String.valueOf(c.getLong(0)));
+                remaining -= value;
+                if (remaining <= 0) break;
+            }
+        } finally {
+            c.close();
+        }
     }
 
     private void showSnapshotInstallations(String rawSnapshot, String customerName, String phone, String place, String location) {
@@ -4210,14 +4341,22 @@ public class MainActivity extends Activity {
 
     private int statusColor(String status) {
         if ("استلام الطفايات".equals(status)) return Color.rgb(37, 99, 235);
+        if ("تم الاستلام".equals(status)) return Color.rgb(37, 99, 235);
         if ("تسليم جزئي".equals(status)) return Color.rgb(148, 163, 184);
+        if ("تم التسليم جزئي".equals(status)) return Color.rgb(148, 163, 184);
         if ("تسليم الطفايات".equals(status)) return Color.rgb(22, 163, 74);
+        if ("تم التسليم".equals(status)) return Color.rgb(22, 163, 74);
+        if ("تم الانتهاء".equals(status)) return Color.rgb(22, 163, 74);
+        if ("تم التحصيل".equals(status)) return Color.rgb(20, 184, 166);
         if ("جاري الصيانة".equals(status)) return Color.rgb(250, 204, 21);
+        if ("جاري العمل".equals(status)) return Color.rgb(250, 204, 21);
+        if ("انتظار التحصيل".equals(status)) return Color.rgb(245, 158, 11);
         return Color.WHITE;
     }
 
     private boolean statusNeedsDarkText(String status) {
-        return "جاري الصيانة".equals(status) || "تسليم جزئي".equals(status);
+        return "جاري الصيانة".equals(status) || "جاري العمل".equals(status) ||
+                "تسليم جزئي".equals(status) || "تم التسليم جزئي".equals(status);
     }
 
     private void quickImageBar() {
