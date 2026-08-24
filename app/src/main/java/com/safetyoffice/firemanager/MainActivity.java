@@ -102,7 +102,9 @@ public class MainActivity extends Activity {
     private boolean updatePromptShown;
     private boolean assignmentsAutoPulled;
     private ListenerRegistration assignmentListener;
+    private ListenerRegistration completedAssignmentListener;
     private String activeAssignmentListenerTeamCode = "";
+    private String activeCompletedAssignmentListenerTeamCode = "";
     private LinearLayout content;
     private TextView syncBadge;
     private EditText voiceTarget;
@@ -135,6 +137,7 @@ public class MainActivity extends Activity {
     private final ArrayList<String> pendingExtinguisherImageUris = new ArrayList<>();
     private String customerSearch = "";
     private String customerStatusFilter = "";
+    private String customerWorkFilter = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -150,6 +153,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (assignmentListener != null) assignmentListener.remove();
+        if (completedAssignmentListener != null) completedAssignmentListener.remove();
         destroySpeechRecognizer();
         super.onDestroy();
     }
@@ -388,6 +392,7 @@ public class MainActivity extends Activity {
         }
         autoPullAssignmentsIfNeeded();
         startAssignmentListenerIfNeeded();
+        startCompletedAssignmentListenerIfNeeded();
     }
 
     private void autoPullAssignmentsIfNeeded() {
@@ -427,12 +432,47 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void startCompletedAssignmentListenerIfNeeded() {
+        if (!isSupervisorUser()) {
+            stopCompletedAssignmentListener();
+            return;
+        }
+        String teamCode = db.setting("team_code", "").trim().replace("/", "_");
+        if (teamCode.isEmpty()) {
+            stopCompletedAssignmentListener();
+            return;
+        }
+        if (completedAssignmentListener != null && teamCode.equals(activeCompletedAssignmentListenerTeamCode)) return;
+        stopCompletedAssignmentListener();
+        activeCompletedAssignmentListenerTeamCode = teamCode;
+        completedAssignmentListener = sync.listenCompletedAssignments(teamCode, new SyncManager.AssignmentListener() {
+            @Override
+            public void onAssignmentsImported(int count, String latestCustomer) {
+                showSupervisorCompletedNotification(count, latestCustomer);
+                if ("team_inbox".equals(currentTab)) loadTeamInbox(teamCode);
+            }
+
+            @Override
+            public void onError(String message) {
+                toast("تعذر تحديث استلام الفنيين: " + safe(message));
+            }
+        });
+    }
+
     private void stopAssignmentListener() {
         if (assignmentListener != null) {
             assignmentListener.remove();
             assignmentListener = null;
         }
         activeAssignmentListenerTeamCode = "";
+    }
+
+    private void stopCompletedAssignmentListener() {
+        if (completedAssignmentListener != null) {
+            completedAssignmentListener.remove();
+            completedAssignmentListener = null;
+        }
+        activeCompletedAssignmentListenerTeamCode = "";
     }
 
     private int appVersionCode() {
@@ -791,13 +831,17 @@ public class MainActivity extends Activity {
         }
         section("فلترة حسب الحالة");
         statusFilterBar();
+        section("فلترة حسب نوع الشغل");
+        workFilterBar();
 
         String sql = "SELECT customer_name, phone, place_name, location, customer_status, SUM(total_count) total_count, SUM(total_price) total_price " +
                 "FROM (" +
-                "SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, SUM(count) total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM extinguishers GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
-                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM safety_certificates GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
-                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at FROM technical_reports GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
-                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, 0 total_price, MAX(created_at) last_at FROM maintenance_contracts GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد')" +
+                "SELECT name customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, 0 total_price, created_at last_at, 'عميل' work_type FROM customers " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, SUM(count) total_count, SUM(total_price) total_price, MAX(created_at) last_at, 'طفايات' work_type FROM extinguishers GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at, 'شهادات' work_type FROM safety_certificates GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, SUM(total_price) total_price, MAX(created_at) last_at, 'تقارير' work_type FROM technical_reports GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, 0 total_price, MAX(created_at) last_at, 'عقود' work_type FROM maintenance_contracts GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, 0 total_count, 0 total_price, MAX(created_at) last_at, 'تركيبات' work_type FROM installation_items GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد')" +
                 ") ";
         ArrayList<String> args = new ArrayList<>();
         sql += "WHERE 1=1 ";
@@ -809,6 +853,10 @@ public class MainActivity extends Activity {
         if (!customerStatusFilter.isEmpty()) {
             sql += "AND customer_status=? ";
             args.add(customerStatusFilter);
+        }
+        if (!customerWorkFilter.isEmpty()) {
+            sql += "AND work_type=? ";
+            args.add(customerWorkFilter);
         }
         sql += "GROUP BY customer_name, phone, place_name, location, customer_status ORDER BY MAX(last_at) DESC";
         Cursor c = db.raw(sql, args.toArray(new String[0]));
@@ -1118,6 +1166,39 @@ public class MainActivity extends Activity {
                 status.equals(customerStatusFilter) ? ACCENT : Color.rgb(203, 213, 225), dp(16)));
         b.setOnClickListener(v -> {
             customerStatusFilter = status;
+            showCustomers();
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
+        lp.setMargins(dp(4), 0, dp(4), dp(4));
+        row.addView(b, lp);
+    }
+
+    private void workFilterBar() {
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        hsv.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        workFilterButton(row, "كل الشغل", "");
+        workFilterButton(row, "طفايات", "طفايات");
+        workFilterButton(row, "تركيبات", "تركيبات");
+        workFilterButton(row, "عقود صيانة", "عقود");
+        hsv.addView(row);
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(2), 0, dp(8));
+        content.addView(hsv, lp);
+    }
+
+    private void workFilterButton(LinearLayout row, String label, String workType) {
+        String selected = workType.equals(customerWorkFilter) ? " ✓" : "";
+        Button b = new Button(this);
+        b.setText(label + selected);
+        b.setTextColor(BRAND_DARK);
+        b.setTextSize(13);
+        b.setAllCaps(false);
+        b.setBackground(rounded(workType.equals(customerWorkFilter) ? BRAND_LIGHT : Color.WHITE,
+                workType.equals(customerWorkFilter) ? ACCENT : Color.rgb(203, 213, 225), dp(16)));
+        b.setOnClickListener(v -> {
+            customerWorkFilter = workType;
             showCustomers();
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
@@ -1703,7 +1784,66 @@ public class MainActivity extends Activity {
         currentTab = "maintenance";
         clear();
         section("عقود الصيانة");
-        small("العقد بيتسجل ويتعرض داخل ملف العميل نفسه. افتح العميل واضغط إضافة عقد صيانة.");
+        if (isSupervisorUser()) {
+            card("إنشاء عقد صيانة", "سجل بيانات العميل والعقد هنا، وبعد الحفظ هتفتح صفحة العميل والعقد يكون تحت ملفه.");
+            EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
+            EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
+            EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
+            EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
+            EditText start = input("تاريخ بداية العقد yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
+            start.setText(today());
+            EditText durationMonths = input("مدة العقد بالشهور", numberType());
+            durationMonths.setText("12");
+            EditText extinguisherCount = input("عدد الطفايات في العقد", numberType());
+            EditText detectorCount = input("عدد الكواشف", numberType());
+            EditText bellCount = input("عدد الأجراس", numberType());
+            EditText breakerCount = input("عدد الكواسر", numberType());
+            EditText exitCount = input("عدد Exit", numberType());
+            EditText panelCount = input("عدد لوحات الإنذار/الحريق", numberType());
+            EditText note = input("تفاصيل وملاحظات العقد", InputType.TYPE_CLASS_TEXT);
+            note.setSingleLine(false);
+            note.setMinLines(2);
+            voiceAllButton("قول بيانات عقد الصيانة مرة واحدة", customer, phone, place, location, start, durationMonths,
+                    extinguisherCount, detectorCount, bellCount, breakerCount, exitCount, panelCount, note);
+            button("إنشاء عقد الصيانة", () -> {
+                if (empty(customer) || empty(start)) return;
+                try {
+                    String name = txt(customer);
+                    String customerPhone = txt(phone);
+                    String customerPlace = txt(place);
+                    String customerLocation = txt(location);
+                    long startDate = ReminderScheduler.parseDate(txt(start));
+                    long visit = ReminderScheduler.addMonthsAvoidWeekend(startDate, 3);
+                    long reminder = ReminderScheduler.maintenanceReminder(visit);
+                    saveCustomerIfMissing(name, customerPhone, customerPlace, customerLocation);
+                    ContentValues cv = new ContentValues();
+                    cv.put("customer_name", name);
+                    cv.put("phone", customerPhone);
+                    cv.put("place_name", customerPlace);
+                    cv.put("location", customerLocation);
+                    cv.put("customer_status", customerStatus(name, customerPhone, customerPlace, customerLocation));
+                    cv.put("start_date", startDate);
+                    cv.put("next_visit_at", visit);
+                    cv.put("reminder_at", reminder);
+                    cv.put("extinguisher_count", parseInt(txt(extinguisherCount), 0));
+                    cv.put("detector_count", parseInt(txt(detectorCount), 0));
+                    cv.put("bell_count", parseInt(txt(bellCount), 0));
+                    cv.put("breaker_count", parseInt(txt(breakerCount), 0));
+                    cv.put("exit_count", parseInt(txt(exitCount), 0));
+                    cv.put("panel_count", parseInt(txt(panelCount), 0));
+                    cv.put("note", "مدة العقد: " + parseInt(txt(durationMonths), 12) + " شهر\n" + txt(note));
+                    cv.put("created_at", System.currentTimeMillis());
+                    db.insert("maintenance_contracts", cv);
+                    saveContactIfEnabled(name, customerPhone);
+                    afterSave("تم إنشاء عقد الصيانة");
+                    openCustomerDetails(name, customerPhone, customerPlace, customerLocation);
+                } catch (Exception e) {
+                    toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
+                }
+            });
+        } else {
+            small("العقد بيتسجل ويتعرض داخل ملف العميل نفسه. افتح العميل واضغط إضافة عقد صيانة.");
+        }
         button("فتح العملاء", this::showCustomers);
         section("عملاء عندهم عقود صيانة");
         Cursor c = db.raw("SELECT customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), " +
@@ -2403,7 +2543,7 @@ public class MainActivity extends Activity {
 
     private void shareAssignmentToWhatsAppGroup(SyncManager.CompletedAssignment item) {
         String message = buildAssignmentGroupMessage(item);
-        ArrayList<String> images = snapshotImageUris(item.completedSnapshot);
+        ArrayList<String> images = snapshotImageUris(!emptyForDb(item.completedSnapshot).isEmpty() ? item.completedSnapshot : item.originalSnapshot);
         shareTextAndImagesToWhatsApp(message, images, "تقرير التنفيذ");
     }
 
@@ -2747,6 +2887,18 @@ public class MainActivity extends Activity {
     }
 
     private void showTeamAssignmentNotification(int count, String latestCustomer) {
+        showWorkNotification(count > 1 ? "وصلت تكليفات جديدة" : "وصل تكليف جديد",
+                emptyForDb(latestCustomer).isEmpty() ? "افتح العملاء المحولين لمراجعة الشغل." : "عميل: " + latestCustomer,
+                6100 + Math.min(count, 99));
+    }
+
+    private void showSupervisorCompletedNotification(int count, String latestCustomer) {
+        showWorkNotification(count > 1 ? "الفنيون سلموا تحديثات" : "الفني سلم تحديث للمراجعة",
+                emptyForDb(latestCustomer).isEmpty() ? "افتح استلام من الفنيين لمراجعة الشغل." : "عميل: " + latestCustomer,
+                6300 + Math.min(count, 99));
+    }
+
+    private void showWorkNotification(String title, String text, int notificationId) {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             return;
         }
@@ -2761,10 +2913,6 @@ public class MainActivity extends Activity {
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pendingIntent = PendingIntent.getActivity(this, 5051, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
-        String title = count > 1 ? "وصلت تكليفات جديدة" : "وصل تكليف جديد";
-        String text = emptyForDb(latestCustomer).isEmpty()
-                ? "افتح العملاء المحولين لمراجعة الشغل."
-                : "عميل: " + latestCustomer;
         Notification.Builder builder = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, TEAM_CHANNEL_ID)
                 : new Notification.Builder(this);
@@ -2775,7 +2923,7 @@ public class MainActivity extends Activity {
                 .setAutoCancel(true)
                 .setDefaults(Notification.DEFAULT_ALL)
                 .setPriority(Notification.PRIORITY_HIGH);
-        manager.notify(6100 + Math.min(count, 99), builder.build());
+        manager.notify(notificationId, builder.build());
     }
 
     private void clear() {

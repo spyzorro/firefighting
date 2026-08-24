@@ -383,6 +383,44 @@ public class SyncManager {
                 });
     }
 
+    public ListenerRegistration listenCompletedAssignments(String teamCode, AssignmentListener listener) {
+        FirebaseUser u = user();
+        String code = cleanTeamCode(teamCode);
+        if (u == null || code.length() == 0) return null;
+        return firestore.collection("fire_manager_assignments").document(code).collection("items")
+                .whereEqualTo("status", "completed")
+                .addSnapshotListener((query, error) -> {
+                    if (error != null) {
+                        if (listener != null) listener.onError(error.getMessage());
+                        return;
+                    }
+                    notifyCompletedAssignments(query, code, listener);
+                });
+    }
+
+    private void notifyCompletedAssignments(QuerySnapshot query, String code, AssignmentListener listener) {
+        if (query == null) return;
+        long lastSeen = 0;
+        try {
+            lastSeen = Long.parseLong(db.setting("last_completed_assignment_seen_" + code, "0"));
+        } catch (Exception ignored) {
+        }
+        long newest = lastSeen;
+        int count = 0;
+        String latestCustomer = "";
+        for (DocumentSnapshot doc : query.getDocuments()) {
+            long completedAt = asLong(doc.get("completed_at"));
+            if (completedAt <= lastSeen) continue;
+            if (completedAt > newest) {
+                newest = completedAt;
+                latestCustomer = doc.getString("customer_name");
+            }
+            count++;
+        }
+        if (newest > lastSeen) db.setSetting("last_completed_assignment_seen_" + code, String.valueOf(newest));
+        if (listener != null && count > 0) listener.onAssignmentsImported(count, latestCustomer == null ? "" : latestCustomer);
+    }
+
     private void importOpenAssignments(QuerySnapshot query, String code, AssignmentListener listener) {
         if (query == null) return;
         int imported = 0;
