@@ -936,6 +936,7 @@ public class MainActivity extends Activity {
                         "\nالحالة: " + safe(currentStatus.isEmpty() ? "جديد" : currentStatus) +
                         "\nإجمالي الطفايات: " + displayCount(extinguisherCount) +
                         "\nإجمالي المبلغ: " + money(totalPrice));
+        customerWorkSummaryCard(oldName, oldPhone, oldPlace, oldLocation);
         if (isTechnicianUser()) {
             actionButton("WhatsApp - تواصل", Color.rgb(22, 163, 74), R.drawable.ic_action_whatsapp, () -> openWhatsAppChat(oldPhone));
         } else {
@@ -957,6 +958,18 @@ public class MainActivity extends Activity {
         else secondaryButton("إضافة صورة/مرفق", () -> chooseAttachment(oldName, oldPhone, oldPlace, oldLocation));
         if (isTechnicianUser()) actionButton("إضافة تركيب", Color.rgb(14, 165, 233), () -> showAddInstallationPage(oldName, oldPhone, oldPlace, oldLocation));
         else secondaryButton("إضافة تركيب", () -> showAddInstallationPage(oldName, oldPhone, oldPlace, oldLocation));
+        if (isTechnicianUser()) actionButton("إضافة/تعديل عقد صيانة", Color.rgb(15, 118, 110), () -> showAddMaintenanceForCustomer(oldName, oldPhone, oldPlace, oldLocation));
+        else secondaryButton("إضافة عقد صيانة", () -> showAddMaintenanceForCustomer(oldName, oldPhone, oldPlace, oldLocation));
+        if (isSupervisorUser()) {
+            secondaryButton("تحويل كل شغل العميل للفريق", () ->
+                    showAssignCustomerToTeam(oldName, oldPhone, oldPlace, oldLocation, currentStatus, extinguisherCount, totalPrice));
+        }
+        String assignmentId = db.teamAssignmentValue(oldName, oldPhone, oldPlace, oldLocation, "assignment_id");
+        String assignmentTeam = db.teamAssignmentValue(oldName, oldPhone, oldPlace, oldLocation, "team_code");
+        if (isTechnicianUser() && !assignmentId.isEmpty()) {
+            actionButton("تم التسليم للمشرف", Color.rgb(220, 38, 38), () ->
+                    finishTeamAssignment(assignmentTeam, assignmentId, oldName, oldPhone, oldPlace, oldLocation));
+        }
         secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
 
         section("كل بيانات العميل");
@@ -978,6 +991,55 @@ public class MainActivity extends Activity {
                 })
                 .setNegativeButton("إلغاء", null)
                 .show();
+    }
+
+    private void customerWorkSummaryCard(String name, String phone, String place, String location) {
+        String installations = customerInstallationSummaryText(name, phone, place, location);
+        String maintenance = customerMaintenanceSummaryText(name, phone, place, location);
+        if (installations.isEmpty() && maintenance.isEmpty()) return;
+        card("إجمالي شغل العميل", (installations.isEmpty() ? "التركيبات: لا يوجد" : installations) +
+                "\n\n" + (maintenance.isEmpty() ? "عقد الصيانة: لا يوجد" : maintenance));
+    }
+
+    private String customerInstallationSummaryText(String name, String phone, String place, String location) {
+        Cursor c = db.raw("SELECT item_type, IFNULL(subtype,''), COUNT(*) FROM installation_items " +
+                        "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=? " +
+                        "GROUP BY item_type, IFNULL(subtype,'') ORDER BY item_type",
+                customerArgs(name, phone, place, location));
+        StringBuilder out = new StringBuilder();
+        try {
+            while (c.moveToNext()) {
+                String type = safe(c.getString(0));
+                String subtype = emptyForDb(c.getString(1));
+                if (out.length() == 0) out.append("التركيبات:");
+                out.append("\n").append(type);
+                if (!subtype.isEmpty()) out.append(" - ").append(subtype);
+                out.append(": ").append(c.getInt(2));
+            }
+        } finally {
+            c.close();
+        }
+        return out.toString();
+    }
+
+    private String customerMaintenanceSummaryText(String name, String phone, String place, String location) {
+        Cursor c = db.raw("SELECT COALESCE(SUM(extinguisher_count),0), COALESCE(SUM(detector_count),0), " +
+                        "COALESCE(SUM(bell_count),0), COALESCE(SUM(breaker_count),0), COALESCE(SUM(exit_count),0), " +
+                        "COALESCE(SUM(panel_count),0), MIN(next_visit_at) FROM maintenance_contracts " +
+                        "WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?",
+                customerArgs(name, phone, place, location));
+        try {
+            if (!c.moveToFirst()) return "";
+            int total = c.getInt(0) + c.getInt(1) + c.getInt(2) + c.getInt(3) + c.getInt(4) + c.getInt(5);
+            long nextVisit = c.getLong(6);
+            if (total == 0 && nextVisit == 0) return "";
+            return "عقد الصيانة:" +
+                    "\nطفايات: " + c.getInt(0) + " | كواشف: " + c.getInt(1) + " | أجراس: " + c.getInt(2) +
+                    "\nكواسر: " + c.getInt(3) + " | Exit: " + c.getInt(4) + " | لوحات: " + c.getInt(5) +
+                    (nextVisit > 0 ? "\nأقرب زيارة: " + ReminderScheduler.formatDate(nextVisit) : "");
+        } finally {
+            c.close();
+        }
     }
 
     private void showCustomerEditPage(String oldName, String oldPhone, String oldPlace, String oldLocation) {
@@ -1565,92 +1627,71 @@ public class MainActivity extends Activity {
         currentTab = "installations";
         clear();
         section("تركيبات");
-        EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
-        EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
-        EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
-        EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
-        section("بنود التركيب");
-        EditText detectorCount = input("عدد الكواشف", numberType());
-        EditText detectorType = input("نوع الكاشف", InputType.TYPE_CLASS_TEXT);
-        detectorType.setText(firstDetectorType());
-        detectorTypeScroll(detectorType);
-        EditText breakerCount = input("عدد الكواسر", numberType());
-        EditText bellCount = input("عدد الأجراس", numberType());
-        EditText extinguisherCount = input("عدد الطفايات", numberType());
-        EditText exitCount = input("عدد Exit", numberType());
-        EditText panelCount = input("عدد لوحات الإنذار/الحريق", numberType());
-        EditText extraType = input("بند إضافي من الإعدادات", InputType.TYPE_CLASS_TEXT);
-        EditText extraCount = input("عدد البند الإضافي", numberType());
-        installationTypeScroll(extraType);
-        EditText note = input("ملاحظات الفني / التركيب", InputType.TYPE_CLASS_TEXT);
-        note.setSingleLine(false);
-        note.setMinLines(2);
-        voiceAllButton("قول بيانات التركيبات مرة واحدة", customer, place, detectorCount, detectorType,
-                breakerCount, bellCount, extinguisherCount, exitCount, panelCount, extraType, extraCount, note);
+        small("التركيبات بتتسجل من داخل ملف العميل. افتح العميل واضغط إضافة تركيب، وكل البنود والصور هتكون تحت نفس العميل.");
+        button("فتح العملاء", this::showCustomers);
         secondaryButton("تعديل بنود التركيبات من الإعدادات", this::showSettings);
-        button("حفظ كل بنود التركيب", () -> {
-            if (empty(customer)) return;
-            saveCustomerIfMissing(txt(customer), txt(phone), txt(place), txt(location));
-            int added = 0;
-            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "كاشف", txt(detectorType), parseInt(txt(detectorCount), 0), txt(note));
-            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "كاسر", "", parseInt(txt(breakerCount), 0), txt(note));
-            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "جرس", "", parseInt(txt(bellCount), 0), txt(note));
-            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "طفاية", "", parseInt(txt(extinguisherCount), 0), txt(note));
-            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "Exit", "", parseInt(txt(exitCount), 0), txt(note));
-            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "لوحة إنذار حريق", "", parseInt(txt(panelCount), 0), txt(note));
-            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), txt(extraType), "", parseInt(txt(extraCount), 0), txt(note));
-            if (added == 0) {
-                toast("اكتب عدد بند واحد على الأقل");
-                return;
-            }
-            saveContactIfEnabled(txt(customer), txt(phone));
-            afterSave("تم حفظ " + added + " بند تركيب");
-            showInstallations();
-        });
-
-        section("كل التركيبات");
-        Cursor c = db.raw("SELECT id, customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), " +
-                "item_type, item_number, IFNULL(subtype,''), IFNULL(note,''), created_at FROM installation_items ORDER BY created_at DESC");
+        section("عملاء عندهم تركيبات");
+        Cursor c = db.raw("SELECT customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), COUNT(*) " +
+                "FROM installation_items GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,'') ORDER BY MAX(created_at) DESC");
         boolean any = false;
         try {
             while (c.moveToNext()) {
                 any = true;
-                long id = c.getLong(0);
-                String name = c.getString(1);
-                String itemPhone = c.getString(2);
-                String itemPlace = c.getString(3);
-                String itemLocation = c.getString(4);
-                String type = c.getString(5);
-                int number = c.getInt(6);
-                String typeDetail = c.getString(7);
-                String itemNote = c.getString(8);
-                card(type + " رقم " + number,
-                        "العميل: " + safe(name) +
+                String name = c.getString(0);
+                String itemPhone = c.getString(1);
+                String itemPlace = c.getString(2);
+                String itemLocation = c.getString(3);
+                card(name,
+                        "عدد بنود التركيب: " + c.getInt(4) +
                                 "\nرقم: " + safe(itemPhone) +
                                 "\nاسم المكان: " + safe(itemPlace) +
-                                "\nالنوع التفصيلي: " + blankDash(typeDetail) +
-                                "\nملاحظات: " + blankDash(itemNote) +
-                                "\nتاريخ الإضافة: " + ReminderScheduler.formatDate(c.getLong(9)));
-                listInstallationImages(id, name, itemPhone, itemPlace, itemLocation);
-                actionButton("إضافة صور", Color.rgb(14, 165, 233), () -> chooseInstallationImage(name, itemPhone, itemPlace, itemLocation, id, "بعد التنفيذ"));
+                                "\n" + customerInstallationSummaryText(name, itemPhone, itemPlace, itemLocation));
                 secondaryButton("فتح ملف العميل", () -> openCustomerDetails(name, itemPhone, itemPlace, itemLocation));
-                secondaryButton("مشاركة البند واتساب", () -> shareInstallationToWhatsApp(type, number, typeDetail, itemNote, id, name, itemPhone, itemPlace, itemLocation));
-                if (isSupervisorUser()) secondaryButton("حذف بند التركيب", () -> confirmDeleteInstallation(id, name, itemPhone, itemPlace, itemLocation));
             }
         } finally {
             c.close();
         }
-        if (!any) small("لا توجد تركيبات مسجلة حتى الآن.");
+        if (!any) small("لا توجد تركيبات مسجلة. افتح ملف العميل واضغط إضافة تركيب.");
     }
 
     private void showMaintenance() {
         currentTab = "maintenance";
         clear();
         section("عقود الصيانة");
-        EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
-        EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
-        EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
-        EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
+        small("العقد بيتسجل ويتعرض داخل ملف العميل نفسه. افتح العميل واضغط إضافة عقد صيانة.");
+        button("فتح العملاء", this::showCustomers);
+        section("عملاء عندهم عقود صيانة");
+        Cursor c = db.raw("SELECT customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), " +
+                "COUNT(*), MIN(next_visit_at) FROM maintenance_contracts " +
+                "GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,'') ORDER BY MIN(next_visit_at)");
+        boolean any = false;
+        try {
+            while (c.moveToNext()) {
+                any = true;
+                String name = c.getString(0);
+                String itemPhone = c.getString(1);
+                String itemPlace = c.getString(2);
+                String itemLocation = c.getString(3);
+                card(name,
+                        "عدد العقود: " + c.getInt(4) +
+                                "\nأقرب زيارة: " + ReminderScheduler.formatDate(c.getLong(5)) +
+                                "\nرقم: " + itemPhone +
+                                "\nاسم المكان: " + itemPlace +
+                                "\nلوكيشن: " + itemLocation +
+                                "\n" + customerMaintenanceSummaryText(name, itemPhone, itemPlace, itemLocation));
+                secondaryButton("فتح ملف العميل", () -> openCustomerDetails(name, itemPhone, itemPlace, itemLocation));
+            }
+        } finally {
+            c.close();
+        }
+        if (!any) small("لا توجد عقود صيانة. افتح ملف العميل واضغط إضافة عقد صيانة.");
+    }
+
+    private void showAddMaintenanceForCustomer(String name, String phone, String place, String location) {
+        currentTab = "maintenance_add";
+        clear();
+        section("إضافة عقد صيانة للعميل");
+        card(name, "العقد هيظهر داخل صفحة العميل، والتنبيه قبل الزيارة بـ 5 أيام. لو الزيارة وقعت جمعة أو سبت التطبيق يزحزحها تلقائيا.");
         EditText start = input("تاريخ بداية العقد yyyy-MM-dd", InputType.TYPE_CLASS_DATETIME);
         start.setText(today());
         EditText extinguisherCount = input("عدد الطفايات في العقد", numberType());
@@ -1662,21 +1703,21 @@ public class MainActivity extends Activity {
         EditText note = input("تفاصيل وملاحظات العقد", InputType.TYPE_CLASS_TEXT);
         note.setSingleLine(false);
         note.setMinLines(2);
-        voiceAllButton("قول بيانات عقد الصيانة مرة واحدة", customer, place, location, start,
+        voiceAllButton("قول بيانات عقد الصيانة مرة واحدة", start,
                 extinguisherCount, detectorCount, bellCount, breakerCount, exitCount, panelCount, note);
-        button("حفظ عقد الصيانة", () -> {
-            if (empty(customer) || empty(start)) return;
+        button("حفظ عقد الصيانة داخل العميل", () -> {
+            if (empty(start)) return;
             try {
                 long startDate = ReminderScheduler.parseDate(txt(start));
                 long visit = ReminderScheduler.addMonthsAvoidWeekend(startDate, 3);
                 long reminder = ReminderScheduler.maintenanceReminder(visit);
-                saveCustomerIfMissing(txt(customer), txt(phone), txt(place), txt(location));
+                saveCustomerIfMissing(name, phone, place, location);
                 ContentValues cv = new ContentValues();
-                cv.put("customer_name", txt(customer));
-                cv.put("phone", txt(phone));
-                cv.put("place_name", txt(place));
-                cv.put("location", txt(location));
-                cv.put("customer_status", "جديد");
+                cv.put("customer_name", name);
+                cv.put("phone", emptyForDb(phone));
+                cv.put("place_name", emptyForDb(place));
+                cv.put("location", emptyForDb(location));
+                cv.put("customer_status", customerStatus(name, phone, place, location));
                 cv.put("start_date", startDate);
                 cv.put("next_visit_at", visit);
                 cv.put("reminder_at", reminder);
@@ -1689,42 +1730,13 @@ public class MainActivity extends Activity {
                 cv.put("note", txt(note));
                 cv.put("created_at", System.currentTimeMillis());
                 db.insert("maintenance_contracts", cv);
-                saveContactIfEnabled(txt(customer), txt(phone));
-                afterSave("تم الحفظ. الزيارة " + ReminderScheduler.formatDate(visit) +
-                        " والتنبيه " + ReminderScheduler.formatDate(reminder));
-                showMaintenance();
+                afterSave("تم حفظ عقد الصيانة داخل العميل");
+                openCustomerDetails(name, phone, place, location);
             } catch (Exception e) {
                 toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
             }
         });
-
-        section("العقود المسجلة");
-        Cursor c = db.all("maintenance_contracts");
-        try {
-            while (c.moveToNext()) {
-                long id = c.getLong(c.getColumnIndexOrThrow("id"));
-                String name = c.getString(c.getColumnIndexOrThrow("customer_name"));
-                String itemPhone = rawVal(c, "phone");
-                String itemPlace = rawVal(c, "place_name");
-                String itemLocation = rawVal(c, "location");
-                card(name,
-                        "الزيارة القادمة: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("next_visit_at"))) +
-                                "\nالتنبيه قبلها: " + ReminderScheduler.formatDate(c.getLong(c.getColumnIndexOrThrow("reminder_at"))) +
-                                "\nرقم: " + itemPhone +
-                                "\nاسم المكان: " + itemPlace +
-                                "\nلوكيشن: " + itemLocation +
-                                maintenanceDetailsText(c));
-                secondaryButton("تعديل العقد", () -> showMaintenanceEdit(id));
-                if (isSupervisorUser()) {
-                    secondaryButton("تحويل العقد للفريق", () -> showAssignCustomerToTeam(name, itemPhone, itemPlace, itemLocation,
-                            customerStatus(name, itemPhone, itemPlace, itemLocation),
-                            customerExtinguisherCount(name, itemPhone, itemPlace, itemLocation),
-                            customerTotalPrice(name, itemPhone, itemPlace, itemLocation)));
-                }
-            }
-        } finally {
-            c.close();
-        }
+        secondaryButton("رجوع لصفحة العميل", () -> openCustomerDetails(name, phone, place, location));
     }
 
     private String maintenanceDetailsText(Cursor c) {
@@ -1803,12 +1815,12 @@ public class MainActivity extends Activity {
                     saveCustomerIfMissing(txt(customer), txt(phone), txt(place), txt(location));
                     saveContactIfEnabled(txt(customer), txt(phone));
                     afterSave("تم حفظ تعديل عقد الصيانة");
-                    showMaintenance();
+                    openCustomerDetails(txt(customer), txt(phone), txt(place), txt(location));
                 } catch (Exception e) {
                     toast("راجع التاريخ، لازم يكون بالشكل yyyy-MM-dd");
                 }
             });
-            secondaryButton("إلغاء والرجوع للعقود", this::showMaintenance);
+            secondaryButton("إلغاء والرجوع لصفحة العميل", () -> openCustomerDetails(txt(customer), txt(phone), txt(place), txt(location)));
         } finally {
             c.close();
         }
