@@ -1627,7 +1627,52 @@ public class MainActivity extends Activity {
         currentTab = "installations";
         clear();
         section("تركيبات");
-        small("التركيبات بتتسجل من داخل ملف العميل. افتح العميل واضغط إضافة تركيب، وكل البنود والصور هتكون تحت نفس العميل.");
+        if (isSupervisorUser()) {
+            card("إنشاء ملف عميل للتركيبات", "سجل بيانات العميل هنا، وبعد الحفظ هتفتح صفحة العميل وكل التركيبات هتبقى تحت نفس الملف.");
+            EditText customer = input("اسم العميل", InputType.TYPE_CLASS_TEXT);
+            EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
+            EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
+            EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
+            section("بنود التركيب الاختيارية");
+            EditText detectorCount = input("عدد الكواشف", numberType());
+            EditText detectorType = input("نوع الكاشف", InputType.TYPE_CLASS_TEXT);
+            detectorType.setText(firstDetectorType());
+            detectorTypeScroll(detectorType);
+            EditText breakerCount = input("عدد الكواسر", numberType());
+            EditText bellCount = input("عدد الأجراس", numberType());
+            EditText extinguisherCount = input("عدد الطفايات", numberType());
+            EditText exitCount = input("عدد Exit", numberType());
+            EditText panelCount = input("عدد لوحات الإنذار/الحريق", numberType());
+            EditText extraType = input("بند إضافي من الإعدادات", InputType.TYPE_CLASS_TEXT);
+            EditText extraCount = input("عدد البند الإضافي", numberType());
+            installationTypeScroll(extraType);
+            EditText note = input("ملاحظات التركيبات", InputType.TYPE_CLASS_TEXT);
+            note.setSingleLine(false);
+            note.setMinLines(2);
+            voiceAllButton("قول بيانات العميل والتركيبات مرة واحدة", customer, phone, place, location,
+                    detectorCount, detectorType, breakerCount, bellCount, extinguisherCount, exitCount, panelCount, extraType, extraCount, note);
+            button("إنشاء ملف العميل", () -> {
+                if (empty(customer)) return;
+                String name = txt(customer);
+                String customerPhone = txt(phone);
+                String customerPlace = txt(place);
+                String customerLocation = txt(location);
+                saveCustomerIfMissing(name, customerPhone, customerPlace, customerLocation);
+                int added = 0;
+                added += saveInstallationItems(name, customerPhone, customerPlace, customerLocation, "كاشف", txt(detectorType), parseInt(txt(detectorCount), 0), txt(note));
+                added += saveInstallationItems(name, customerPhone, customerPlace, customerLocation, "كاسر", "", parseInt(txt(breakerCount), 0), txt(note));
+                added += saveInstallationItems(name, customerPhone, customerPlace, customerLocation, "جرس", "", parseInt(txt(bellCount), 0), txt(note));
+                added += saveInstallationItems(name, customerPhone, customerPlace, customerLocation, "طفاية", "", parseInt(txt(extinguisherCount), 0), txt(note));
+                added += saveInstallationItems(name, customerPhone, customerPlace, customerLocation, "Exit", "", parseInt(txt(exitCount), 0), txt(note));
+                added += saveInstallationItems(name, customerPhone, customerPlace, customerLocation, "لوحة إنذار حريق", "", parseInt(txt(panelCount), 0), txt(note));
+                added += saveInstallationItems(name, customerPhone, customerPlace, customerLocation, txt(extraType), "", parseInt(txt(extraCount), 0), txt(note));
+                saveContactIfEnabled(name, customerPhone);
+                afterSave(added > 0 ? "تم إنشاء ملف العميل وحفظ " + added + " بند تركيب" : "تم إنشاء ملف العميل");
+                openCustomerDetails(name, customerPhone, customerPlace, customerLocation);
+            });
+        } else {
+            small("التركيبات بتتسجل من داخل ملف العميل. افتح العميل واضغط إضافة تركيب، وكل البنود والصور هتكون تحت نفس العميل.");
+        }
         button("فتح العملاء", this::showCustomers);
         secondaryButton("تعديل بنود التركيبات من الإعدادات", this::showSettings);
         section("عملاء عندهم تركيبات");
