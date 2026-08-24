@@ -1106,6 +1106,89 @@ public class MainActivity extends Activity {
                 "طفاية";
     }
 
+    private String firstDetectorType() {
+        for (String type : installationTypes()) {
+            if (type.contains("كاشف")) return type.replace("كاشف", "").trim().isEmpty() ? type : type.replace("كاشف", "").trim();
+        }
+        return "عادي";
+    }
+
+    private void detectorTypeScroll(EditText target) {
+        ArrayList<String> choices = new ArrayList<>();
+        for (String type : installationTypes()) {
+            if (type.contains("كاشف")) {
+                String clean = type.replace("كاشف", "").trim();
+                choices.add(clean.isEmpty() ? type : clean);
+            }
+        }
+        if (choices.isEmpty()) {
+            choices.add("عادي");
+            choices.add("زيتا");
+            choices.add("ادريسبول");
+        }
+        choiceScroll("اختار نوع الكاشف", target, choices);
+    }
+
+    private void installationTypeScroll(EditText target) {
+        ArrayList<String> choices = new ArrayList<>();
+        for (String type : installationTypes()) {
+            if (!type.contains("كاشف") && !type.equals("جرس") && !type.equals("كاسر") &&
+                    !type.equals("طفاية") && !type.equals("Exit") && !type.contains("لوحة")) {
+                choices.add(type);
+            }
+        }
+        if (!choices.isEmpty()) choiceScroll("بنود إضافية", target, choices);
+    }
+
+    private void choiceScroll(String title, EditText target, ArrayList<String> choices) {
+        small(title);
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        hsv.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        for (String choice : choices) {
+            Button b = new Button(this);
+            b.setText(choice);
+            b.setTextSize(13);
+            b.setTextColor(Color.WHITE);
+            b.setAllCaps(false);
+            b.setMinHeight(dp(42));
+            b.setBackground(rounded(installationTypeColor(choice), darken(installationTypeColor(choice)), dp(18)));
+            b.setOnClickListener(v -> {
+                target.setText(choice);
+                target.setSelection(target.getText().length());
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44));
+            lp.setMargins(dp(4), dp(2), dp(4), dp(8));
+            row.addView(b, lp);
+        }
+        hsv.addView(row);
+        content.addView(hsv, matchWrap());
+    }
+
+    private int saveInstallationItems(String name, String phone, String place, String location,
+                                      String type, String subtype, int count, String note) {
+        String cleanType = emptyForDb(type).trim();
+        if (cleanType.isEmpty() || count <= 0) return 0;
+        int added = 0;
+        for (int i = 1; i <= count; i++) {
+            ContentValues cv = new ContentValues();
+            cv.put("customer_name", name);
+            cv.put("phone", emptyForDb(phone));
+            cv.put("place_name", emptyForDb(place));
+            cv.put("location", emptyForDb(location));
+            cv.put("customer_status", customerStatus(name, phone, place, location));
+            cv.put("item_type", cleanType);
+            cv.put("item_number", i);
+            cv.put("subtype", emptyForDb(subtype));
+            cv.put("note", emptyForDb(note));
+            cv.put("created_at", System.currentTimeMillis() + i);
+            db.insert("installation_items", cv);
+            added++;
+        }
+        return added;
+    }
+
     private int installationTypeColor(String type) {
         String value = emptyForDb(type);
         if (value.contains("كاشف")) return Color.rgb(37, 99, 235);
@@ -1168,41 +1251,39 @@ public class MainActivity extends Activity {
         currentTab = "installation_add";
         clear();
         section("إضافة تركيب");
-        card(name, "اختر البند اللي الفني ركبه، وبعد الحفظ ضيف صوره لوحده.");
-        EditText itemType = input("نوع التركيب", InputType.TYPE_CLASS_TEXT);
-        EditText itemNumber = input("رقم القطعة / العدد", numberType());
-        itemNumber.setText("1");
-        EditText subtype = input("النوع التفصيلي", InputType.TYPE_CLASS_TEXT);
+        card(name, "سجل كل بنود التركيب للعميل مرة واحدة، وبعدها أضف الصور لكل بند من قائمة التركيبات.");
+        EditText detectorCount = input("عدد الكواشف", numberType());
+        EditText detectorType = input("نوع الكاشف", InputType.TYPE_CLASS_TEXT);
+        detectorType.setText(firstDetectorType());
+        detectorTypeScroll(detectorType);
+        EditText breakerCount = input("عدد الكواسر", numberType());
+        EditText bellCount = input("عدد الأجراس", numberType());
+        EditText extinguisherCount = input("عدد الطفايات", numberType());
+        EditText exitCount = input("عدد Exit", numberType());
+        EditText panelCount = input("عدد لوحات الإنذار/الحريق", numberType());
+        EditText extraType = input("بند إضافي من الإعدادات", InputType.TYPE_CLASS_TEXT);
+        EditText extraCount = input("عدد البند الإضافي", numberType());
+        installationTypeScroll(extraType);
         EditText note = input("ملاحظات", InputType.TYPE_CLASS_TEXT);
         note.setSingleLine(false);
         note.setMinLines(2);
-
-        section("اختيار سريع");
-        for (String type : installationTypes()) {
-            actionButton(type, installationTypeColor(type), () -> {
-                itemType.setText(type);
-                itemType.setSelection(itemType.getText().length());
-                if (emptyForDb(txt(subtype)).isEmpty() && type.contains("كاشف")) subtype.setText(type.replace("كاشف", "").trim());
-            });
-        }
-        button("حفظ بند التركيب", () -> {
-            if (empty(itemType)) return;
-            ContentValues cv = new ContentValues();
-            cv.put("customer_name", name);
-            cv.put("phone", emptyForDb(phone));
-            cv.put("place_name", emptyForDb(place));
-            cv.put("location", emptyForDb(location));
-            cv.put("customer_status", customerStatus(name, phone, place, location));
-            cv.put("item_type", txt(itemType));
-            cv.put("item_number", parseInt(txt(itemNumber), 1));
-            cv.put("subtype", txt(subtype));
-            cv.put("note", txt(note));
-            cv.put("created_at", System.currentTimeMillis());
-            long id = db.insert("installation_items", cv);
-            afterSave("تم حفظ بند التركيب");
-            pendingInstallationId = id;
-            setPendingInstallationCustomer(name, phone, place, location, "بعد التنفيذ");
-            chooseInstallationImage(name, phone, place, location, id, "بعد التنفيذ");
+        voiceAllButton("قول بيانات التركيبات مرة واحدة", detectorCount, detectorType,
+                breakerCount, bellCount, extinguisherCount, exitCount, panelCount, extraType, extraCount, note);
+        button("حفظ كل بنود التركيب", () -> {
+            int added = 0;
+            added += saveInstallationItems(name, phone, place, location, "كاشف", txt(detectorType), parseInt(txt(detectorCount), 0), txt(note));
+            added += saveInstallationItems(name, phone, place, location, "كاسر", "", parseInt(txt(breakerCount), 0), txt(note));
+            added += saveInstallationItems(name, phone, place, location, "جرس", "", parseInt(txt(bellCount), 0), txt(note));
+            added += saveInstallationItems(name, phone, place, location, "طفاية", "", parseInt(txt(extinguisherCount), 0), txt(note));
+            added += saveInstallationItems(name, phone, place, location, "Exit", "", parseInt(txt(exitCount), 0), txt(note));
+            added += saveInstallationItems(name, phone, place, location, "لوحة إنذار حريق", "", parseInt(txt(panelCount), 0), txt(note));
+            added += saveInstallationItems(name, phone, place, location, txt(extraType), "", parseInt(txt(extraCount), 0), txt(note));
+            if (added == 0) {
+                toast("اكتب عدد بند واحد على الأقل");
+                return;
+            }
+            afterSave("تم حفظ " + added + " بند تركيب");
+            openCustomerDetails(name, phone, place, location);
         });
         secondaryButton("رجوع لصفحة العميل", () -> openCustomerDetails(name, phone, place, location));
     }
@@ -1488,40 +1569,43 @@ public class MainActivity extends Activity {
         EditText phone = input("رقم العميل", InputType.TYPE_CLASS_PHONE);
         EditText place = input("اسم المكان", InputType.TYPE_CLASS_TEXT);
         EditText location = input("اللوكيشن", InputType.TYPE_CLASS_TEXT);
-        EditText itemType = input("نوع التركيب", InputType.TYPE_CLASS_TEXT);
-        EditText itemNumber = input("رقم القطعة / العدد", numberType());
-        itemNumber.setText("1");
-        EditText subtype = input("النوع التفصيلي", InputType.TYPE_CLASS_TEXT);
+        section("بنود التركيب");
+        EditText detectorCount = input("عدد الكواشف", numberType());
+        EditText detectorType = input("نوع الكاشف", InputType.TYPE_CLASS_TEXT);
+        detectorType.setText(firstDetectorType());
+        detectorTypeScroll(detectorType);
+        EditText breakerCount = input("عدد الكواسر", numberType());
+        EditText bellCount = input("عدد الأجراس", numberType());
+        EditText extinguisherCount = input("عدد الطفايات", numberType());
+        EditText exitCount = input("عدد Exit", numberType());
+        EditText panelCount = input("عدد لوحات الإنذار/الحريق", numberType());
+        EditText extraType = input("بند إضافي من الإعدادات", InputType.TYPE_CLASS_TEXT);
+        EditText extraCount = input("عدد البند الإضافي", numberType());
+        installationTypeScroll(extraType);
         EditText note = input("ملاحظات الفني / التركيب", InputType.TYPE_CLASS_TEXT);
         note.setSingleLine(false);
         note.setMinLines(2);
-        voiceAllButton("قول بيانات التركيب مرة واحدة", customer, place, itemType, itemNumber, subtype, note);
-        section("اختيار نوع سريع");
-        for (String type : installationTypes()) {
-            actionButton(type, installationTypeColor(type), () -> {
-                itemType.setText(type);
-                itemType.setSelection(itemType.getText().length());
-                if (emptyForDb(txt(subtype)).isEmpty() && type.contains("كاشف")) subtype.setText(type.replace("كاشف", "").trim());
-            });
-        }
-        button("حفظ التركيب وإضافة صور", () -> {
-            if (empty(customer) || empty(itemType)) return;
+        voiceAllButton("قول بيانات التركيبات مرة واحدة", customer, place, detectorCount, detectorType,
+                breakerCount, bellCount, extinguisherCount, exitCount, panelCount, extraType, extraCount, note);
+        secondaryButton("تعديل بنود التركيبات من الإعدادات", this::showSettings);
+        button("حفظ كل بنود التركيب", () -> {
+            if (empty(customer)) return;
             saveCustomerIfMissing(txt(customer), txt(phone), txt(place), txt(location));
-            ContentValues cv = new ContentValues();
-            cv.put("customer_name", txt(customer));
-            cv.put("phone", txt(phone));
-            cv.put("place_name", txt(place));
-            cv.put("location", txt(location));
-            cv.put("customer_status", customerStatus(txt(customer), txt(phone), txt(place), txt(location)));
-            cv.put("item_type", txt(itemType));
-            cv.put("item_number", parseInt(txt(itemNumber), 1));
-            cv.put("subtype", txt(subtype));
-            cv.put("note", txt(note));
-            cv.put("created_at", System.currentTimeMillis());
-            long id = db.insert("installation_items", cv);
+            int added = 0;
+            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "كاشف", txt(detectorType), parseInt(txt(detectorCount), 0), txt(note));
+            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "كاسر", "", parseInt(txt(breakerCount), 0), txt(note));
+            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "جرس", "", parseInt(txt(bellCount), 0), txt(note));
+            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "طفاية", "", parseInt(txt(extinguisherCount), 0), txt(note));
+            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "Exit", "", parseInt(txt(exitCount), 0), txt(note));
+            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), "لوحة إنذار حريق", "", parseInt(txt(panelCount), 0), txt(note));
+            added += saveInstallationItems(txt(customer), txt(phone), txt(place), txt(location), txt(extraType), "", parseInt(txt(extraCount), 0), txt(note));
+            if (added == 0) {
+                toast("اكتب عدد بند واحد على الأقل");
+                return;
+            }
             saveContactIfEnabled(txt(customer), txt(phone));
-            afterSave("تم حفظ التركيب");
-            chooseInstallationImage(txt(customer), txt(phone), txt(place), txt(location), id, "بعد التنفيذ");
+            afterSave("تم حفظ " + added + " بند تركيب");
+            showInstallations();
         });
 
         section("كل التركيبات");
