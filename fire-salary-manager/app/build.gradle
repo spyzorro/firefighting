@@ -1,0 +1,58 @@
+plugins {
+    id "com.android.application"
+    id "com.google.gms.google-services"
+}
+
+def githubRunNumberText = System.getenv("GITHUB_RUN_NUMBER") ?: "0"
+def githubRunNumber = githubRunNumberText ==~ /\d+/ ? githubRunNumberText.toInteger() : 0
+def autoVersionCode = githubRunNumber > 0 ? 510000 + githubRunNumber : 510001
+def autoVersionName = githubRunNumber > 0 ? "5.1.${githubRunNumber}" : "5.1.1"
+
+android {
+    namespace "com.safetyoffice.firemanager"
+    compileSdk 35
+
+    signingConfigs {
+        fireManager {
+            storeFile file("firemanager-update.jks")
+            storePassword "FireManager2026"
+            keyAlias "firemanager"
+            keyPassword "FireManager2026"
+        }
+    }
+
+    defaultConfig {
+        applicationId "com.safetyoffice.firemanager"
+        minSdk 23
+        targetSdk 35
+        versionCode autoVersionCode
+        versionName autoVersionName
+    }
+
+    sourceSets {
+        main {
+            java {
+                exclude "com/mohamed/**"
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.fireManager
+        }
+        release {
+            signingConfig signingConfigs.fireManager
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+}
+
+dependencies {
+    implementation platform("com.google.firebase:firebase-bom:33.7.0")
+    implementation "com.google.firebase:firebase-auth"
+    implementation "com.google.firebase:firebase-firestore"
+    implementation "com.google.android.gms:play-services-auth:21.3.0"
+    implementation "androidx.core:core:1.13.1"
+}
