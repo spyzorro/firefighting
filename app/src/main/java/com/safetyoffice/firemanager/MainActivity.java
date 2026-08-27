@@ -37,6 +37,7 @@ import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
@@ -44,6 +45,9 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.ListenerRegistration;
@@ -65,6 +69,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.Locale;
@@ -138,6 +143,10 @@ public class MainActivity extends Activity {
     private String customerSearch = "";
     private String customerStatusFilter = "";
     private String customerWorkFilter = "";
+    private boolean mapLocationRequested;
+    private double mapCurrentLat = Double.NaN;
+    private double mapCurrentLng = Double.NaN;
+    private final ArrayList<CustomerMapItem> activeMapItems = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -208,12 +217,13 @@ public class MainActivity extends Activity {
         if (requestCode == RECORD_AUDIO_REQUEST && grantResults.length > 0 &&
                 grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             toast("تم السماح بالصوت، اضغط زر الصوت مرة أخرى وابدأ التسجيل");
-        } else if (requestCode == LOCATION_REQUEST && locationTarget != null) {
+        } else if (requestCode == LOCATION_REQUEST) {
             boolean granted = false;
             for (int result : grantResults) {
                 if (result == PackageManager.PERMISSION_GRANTED) granted = true;
             }
-            if (granted) fillCurrentLocation(locationTarget);
+            if (granted && mapLocationRequested) updateCurrentMapLocation();
+            else if (granted && locationTarget != null) fillCurrentLocation(locationTarget);
             else toast("لازم تسمح للتطبيق باستخدام الموقع علشان زر موقعي يشتغل");
         } else if (requestCode == CONTACTS_REQUEST) {
             boolean granted = true;
@@ -273,6 +283,7 @@ public class MainActivity extends Activity {
         LinearLayout tabs = new LinearLayout(this);
         tabs.setOrientation(LinearLayout.HORIZONTAL);
         addTab(tabs, "تسجيل", R.drawable.ic_nav_extinguisher, v -> showExtinguishers());
+        addTab(tabs, "الخريطة", R.drawable.ic_nav_map, v -> showCustomerMap());
         addTab(tabs, "العملاء", R.drawable.ic_nav_customers, v -> showCustomers());
         addTab(tabs, "تركيبات", R.drawable.ic_nav_tasks, v -> showInstallations());
         addTab(tabs, "عقود", R.drawable.ic_nav_alerts, v -> showMaintenance());
@@ -318,8 +329,10 @@ public class MainActivity extends Activity {
             hero("تكليفاتي",
                     "هذه نسخة الفني. لن يظهر هنا إلا العملاء الذين حولهم لك المشرف بالكود.");
             button("استلام التكليفات المرسلة لي", this::showSync);
+            button("خريطة العملاء", this::showCustomerMap);
             section("اختصارات");
             homeAction("العملاء المحولون", "الشغل المرسل لك فقط", this::showCustomers);
+            homeAction("خريطة العملاء", "الأقرب فالأبعد حسب اللوكيشن", this::showCustomerMap);
             homeAction("تركيبات", "تسجيل بنود التركيب وصورها", this::showInstallations);
             homeAction("عقود الصيانة", "تعديل تفاصيل الزيارة والملاحظات", this::showMaintenance);
             homeAction("مزامنة Google", "استلام التكليفات وإرسال التحديث", this::showSync);
@@ -342,8 +355,10 @@ public class MainActivity extends Activity {
                 "نسبتك الإجمالية: " + money(shareTotal) +
                         "\nعدد شهادات السلامة: " + certificates);
         button("تسجيل عميل وطفايات بسرعة", this::showExtinguishers);
+        button("خريطة العملاء", this::showCustomerMap);
         section("اختصارات");
         homeAction("العملاء", "بحث وتغيير حالة وواتساب", this::showCustomers);
+        homeAction("خريطة العملاء", "علامات العملاء وترتيب الزيارات", this::showCustomerMap);
         homeAction("تركيبات", "بنود وصور التركيبات لكل العملاء", this::showInstallations);
         homeAction("عقود الصيانة", "زيارات كل 3 شهور وتحويل للفنيين", this::showMaintenance);
         homeAction("تنبيهات", "المواعيد القريبة والمتأخرة", this::showAlerts);
@@ -357,6 +372,7 @@ public class MainActivity extends Activity {
         section("المزيد");
         if (isTechnicianUser()) {
             homeAction("العملاء المحولون", "الشغل المرسل لك فقط", this::showCustomers);
+            homeAction("خريطة العملاء", "ترتيب الزيارات من الأقرب", this::showCustomerMap);
             homeAction("تركيبات", "تسجيل بنود التركيب وصورها", this::showInstallations);
             homeAction("عقود الصيانة", "تفاصيل الزيارات المحولة لك", this::showMaintenance);
             homeAction("مزامنة Google", "استلام التكليفات وإرسال التحديث", this::showSync);
@@ -817,6 +833,7 @@ public class MainActivity extends Activity {
         currentTab = "customers";
         clear();
         section("العملاء");
+        button("فتح خريطة العملاء", this::showCustomerMap);
         EditText search = input("بحث باسم العميل أو الرقم", InputType.TYPE_CLASS_TEXT);
         search.setText(customerSearch);
         button("بحث سريع", () -> {
@@ -888,6 +905,313 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void showCustomerMap() {
+        currentTab = "customer_map";
+        clear();
+        section("خريطة العملاء");
+        rememberBestMapLocationIfAllowed();
+        ArrayList<CustomerMapItem> items = customerMapItems();
+        sortMapItemsByDistance(items);
+        activeMapItems.clear();
+        activeMapItems.addAll(items);
+
+        int located = 0;
+        for (CustomerMapItem item : items) if (item.hasCoordinate) located++;
+        card("ملخص الخريطة",
+                "عملاء بإحداثيات واضحة: " + located +
+                        "\nعملاء بدون إحداثيات واضحة: " + Math.max(0, items.size() - located) +
+                        "\nالترتيب: " + (hasMapCurrentLocation() ? "من الأقرب لموقعك الحالي" : "اضغط تحديث موقعي للترتيب بالأقرب"));
+        actionButton("تحديث موقعي وترتيب الأقرب", Color.rgb(37, 99, 235), R.drawable.ic_action_maps, this::updateCurrentMapLocation);
+
+        if (items.isEmpty()) {
+            small("لا يوجد عملاء مسجلين حتى الآن.");
+            secondaryButton("رجوع", this::showHome);
+            return;
+        }
+
+        WebView map = new WebView(this);
+        map.getSettings().setJavaScriptEnabled(true);
+        map.setWebViewClient(new WebViewClient());
+        map.addJavascriptInterface(new CustomerMapBridge(), "FireManager");
+        map.loadDataWithBaseURL("https://firemanager.local/", customerMapHtml(items), "text/html", "UTF-8", null);
+        LinearLayout.LayoutParams mapLp = new LinearLayout.LayoutParams(-1, dp(360));
+        mapLp.setMargins(0, dp(8), 0, dp(12));
+        content.addView(map, mapLp);
+
+        CustomerMapItem nearest = nearestMapCustomer(items);
+        if (nearest != null) {
+            actionButton("افتح أقرب عميل على Google Maps", Color.rgb(22, 163, 74), R.drawable.ic_action_maps,
+                    () -> openLocation(nearest.location));
+        }
+
+        section("الترتيب من الأقرب للأبعد");
+        int order = 1;
+        for (CustomerMapItem item : items) {
+            String distance = item.hasCoordinate && hasMapCurrentLocation()
+                    ? "\nالمسافة التقريبية: " + formatDistance(item.distanceMeters)
+                    : "";
+            card(order + " - " + item.name,
+                    "رقم: " + safe(item.phone) +
+                            "\nاسم المكان: " + safe(item.place) +
+                            "\nالحالة: " + safe(item.status.isEmpty() ? "جديد" : item.status) +
+                            "\nلوكيشن: " + safe(item.location) +
+                            distance);
+            secondaryButton("فتح ملف العميل", () -> openCustomerDetails(item.name, item.phone, item.place, item.location));
+            if (item.hasCoordinate) secondaryButton("فتح اللوكيشن", () -> openLocation(item.location));
+            order++;
+        }
+        secondaryButton("رجوع", this::showHome);
+    }
+
+    private ArrayList<CustomerMapItem> customerMapItems() {
+        ArrayList<CustomerMapItem> items = new ArrayList<>();
+        String sql = "SELECT customer_name, phone, place_name, location, " +
+                "SUBSTR(MAX(printf('%013d', last_at) || customer_status), 14) customer_status, MAX(last_at) last_at " +
+                "FROM (" +
+                "SELECT name customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, created_at last_at FROM customers " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, MAX(created_at) last_at FROM extinguishers GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, MAX(created_at) last_at FROM safety_certificates GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, MAX(created_at) last_at FROM technical_reports GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, MAX(created_at) last_at FROM maintenance_contracts GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد') " +
+                "UNION ALL SELECT customer_name, IFNULL(phone,'') phone, IFNULL(place_name,'') place_name, IFNULL(location,'') location, IFNULL(customer_status,'جديد') customer_status, MAX(created_at) last_at FROM installation_items GROUP BY customer_name, IFNULL(phone,''), IFNULL(place_name,''), IFNULL(location,''), IFNULL(customer_status,'جديد')" +
+                ") GROUP BY customer_name, phone, place_name, location ORDER BY MAX(last_at) DESC";
+        Cursor c = db.raw(sql);
+        try {
+            while (c.moveToNext()) {
+                CustomerMapItem item = new CustomerMapItem();
+                item.name = emptyForDb(c.getString(0));
+                item.phone = emptyForDb(c.getString(1));
+                item.place = emptyForDb(c.getString(2));
+                item.location = emptyForDb(c.getString(3));
+                item.status = emptyForDb(c.getString(4));
+                if (isTechnicianUser() && db.teamAssignmentValue(item.name, item.phone, item.place, item.location, "assignment_id").isEmpty()) {
+                    continue;
+                }
+                Coordinate coordinate = parseCoordinate(item.location);
+                if (coordinate != null) {
+                    item.hasCoordinate = true;
+                    item.lat = coordinate.lat;
+                    item.lng = coordinate.lng;
+                }
+                items.add(item);
+            }
+        } finally {
+            c.close();
+        }
+        return items;
+    }
+
+    private void sortMapItemsByDistance(ArrayList<CustomerMapItem> items) {
+        for (CustomerMapItem item : items) {
+            item.distanceMeters = item.hasCoordinate && hasMapCurrentLocation()
+                    ? distanceMeters(mapCurrentLat, mapCurrentLng, item.lat, item.lng)
+                    : Double.MAX_VALUE;
+        }
+        Collections.sort(items, (a, b) -> {
+            if (a.hasCoordinate != b.hasCoordinate) return a.hasCoordinate ? -1 : 1;
+            int distance = Double.compare(a.distanceMeters, b.distanceMeters);
+            if (distance != 0) return distance;
+            return a.name.compareTo(b.name);
+        });
+    }
+
+    private CustomerMapItem nearestMapCustomer(ArrayList<CustomerMapItem> items) {
+        for (CustomerMapItem item : items) {
+            if (item.hasCoordinate) return item;
+        }
+        return null;
+    }
+
+    private String customerMapHtml(ArrayList<CustomerMapItem> items) {
+        double centerLat = hasMapCurrentLocation() ? mapCurrentLat : 24.7136;
+        double centerLng = hasMapCurrentLocation() ? mapCurrentLng : 46.6753;
+        for (CustomerMapItem item : items) {
+            if (item.hasCoordinate) {
+                centerLat = item.lat;
+                centerLng = item.lng;
+                break;
+            }
+        }
+        StringBuilder markers = new StringBuilder();
+        for (int i = 0; i < items.size(); i++) {
+            CustomerMapItem item = items.get(i);
+            if (!item.hasCoordinate) continue;
+            String popup = "<div style='direction:rtl;text-align:right;min-width:150px'><b>" +
+                    htmlEscape(item.name) + "</b><br>" + htmlEscape(item.place) +
+                    "<br><button onclick='FireManager.openCustomer(" + i + ")'>فتح العميل</button></div>";
+            markers.append("addMarker(")
+                    .append(String.format(Locale.US, "%.7f,%.7f,", item.lat, item.lng))
+                    .append(JSONObject.quote(item.name))
+                    .append(",")
+                    .append(JSONObject.quote(popup))
+                    .append(");\n");
+        }
+        String current = "";
+        if (hasMapCurrentLocation()) {
+            current = "L.circleMarker([" + String.format(Locale.US, "%.7f,%.7f", mapCurrentLat, mapCurrentLng) + "],{radius:8,color:'#2563eb',fillColor:'#2563eb',fillOpacity:.85}).addTo(map).bindPopup('موقعي الحالي');\n";
+        }
+        return "<!doctype html><html dir='rtl'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" +
+                "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'>" +
+                "<style>html,body,#map{height:100%;margin:0} .leaflet-popup-content{font-family:sans-serif}</style></head>" +
+                "<body><div id='map'></div><script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script><script>" +
+                "var map=L.map('map').setView([" + String.format(Locale.US, "%.7f,%.7f", centerLat, centerLng) + "],12);" +
+                "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'OpenStreetMap'}).addTo(map);" +
+                "var bounds=[];function addMarker(lat,lng,title,popup){var m=L.marker([lat,lng]).addTo(map).bindPopup(popup);bounds.push([lat,lng]);}" +
+                current + markers +
+                "if(bounds.length>1){map.fitBounds(bounds,{padding:[24,24]});}else if(bounds.length==1){map.setView(bounds[0],15);}" +
+                "</script></body></html>";
+    }
+
+    private void updateCurrentMapLocation() {
+        mapLocationRequested = true;
+        if (!hasLocationPermission()) {
+            requestPermissions(new String[]{
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+            }, LOCATION_REQUEST);
+            return;
+        }
+        mapLocationRequested = false;
+        LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        if (manager == null) {
+            toast("خدمة الموقع غير متاحة على الجهاز");
+            return;
+        }
+        Location best = bestLastKnownLocation(manager);
+        if (best != null) setMapCurrentLocation(best);
+        String provider = manager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+                ? LocationManager.GPS_PROVIDER
+                : (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ? LocationManager.NETWORK_PROVIDER : null);
+        if (provider == null) {
+            showCustomerMap();
+            toast("افتح GPS/Location من إعدادات الموبايل ثم اضغط تحديث موقعي");
+            return;
+        }
+        try {
+            manager.requestSingleUpdate(provider, new LocationListener() {
+                @Override
+                public void onLocationChanged(Location location) {
+                    setMapCurrentLocation(location);
+                    showCustomerMap();
+                }
+
+                @Override
+                public void onStatusChanged(String provider, int status, Bundle extras) {
+                }
+
+                @Override
+                public void onProviderEnabled(String provider) {
+                }
+
+                @Override
+                public void onProviderDisabled(String provider) {
+                }
+            }, null);
+            showCustomerMap();
+            toast(best == null ? "جاري تحديد موقعك..." : "تم ترتيب العملاء، وجاري تحسين الدقة");
+        } catch (SecurityException e) {
+            toast("اسمح للتطبيق باستخدام الموقع");
+        } catch (Exception e) {
+            showCustomerMap();
+            toast("تعذر تحديث الموقع الحالي");
+        }
+    }
+
+    private void rememberBestMapLocationIfAllowed() {
+        if (hasMapCurrentLocation() || !hasLocationPermission()) return;
+        LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        if (manager == null) return;
+        Location best = bestLastKnownLocation(manager);
+        if (best != null) setMapCurrentLocation(best);
+    }
+
+    private void setMapCurrentLocation(Location location) {
+        if (location == null) return;
+        mapCurrentLat = location.getLatitude();
+        mapCurrentLng = location.getLongitude();
+    }
+
+    private boolean hasMapCurrentLocation() {
+        return !Double.isNaN(mapCurrentLat) && !Double.isNaN(mapCurrentLng);
+    }
+
+    private Coordinate parseCoordinate(String value) {
+        String text = emptyForDb(value);
+        if (text.isEmpty()) return null;
+        try {
+            text = Uri.decode(text);
+        } catch (Exception ignored) {
+        }
+        Matcher matcher = Pattern.compile("(-?\\d{1,3}(?:\\.\\d+)?)\\s*,\\s*(-?\\d{1,3}(?:\\.\\d+)?)").matcher(text);
+        while (matcher.find()) {
+            try {
+                double lat = Double.parseDouble(matcher.group(1));
+                double lng = Double.parseDouble(matcher.group(2));
+                if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return new Coordinate(lat, lng);
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
+    }
+
+    private double distanceMeters(double lat1, double lng1, double lat2, double lng2) {
+        double earth = 6371000.0;
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLng = Math.toRadians(lng2 - lng1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        return earth * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    private String formatDistance(double meters) {
+        if (meters == Double.MAX_VALUE) return "-";
+        if (meters < 1000) return Math.round(meters) + " متر";
+        return cleanNumber(meters / 1000.0) + " كم";
+    }
+
+    private String htmlEscape(String value) {
+        return emptyForDb(value)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
+    }
+
+    private class CustomerMapBridge {
+        @JavascriptInterface
+        public void openCustomer(int index) {
+            runOnUiThread(() -> {
+                if (index < 0 || index >= activeMapItems.size()) return;
+                CustomerMapItem item = activeMapItems.get(index);
+                openCustomerDetails(item.name, item.phone, item.place, item.location);
+            });
+        }
+    }
+
+    private static class Coordinate {
+        final double lat;
+        final double lng;
+
+        Coordinate(double lat, double lng) {
+            this.lat = lat;
+            this.lng = lng;
+        }
+    }
+
+    private static class CustomerMapItem {
+        String name = "";
+        String phone = "";
+        String place = "";
+        String location = "";
+        String status = "";
+        boolean hasCoordinate;
+        double lat;
+        double lng;
+        double distanceMeters = Double.MAX_VALUE;
+    }
+
     private void showCustomerQuickActions(String name, String phone, String place, String location, String status,
                                           int extinguisherCount, double totalPrice) {
         currentTab = "customer_actions";
@@ -920,7 +1244,7 @@ public class MainActivity extends Activity {
         String assignmentId = db.teamAssignmentValue(name, phone, place, location, "assignment_id");
         String assignmentTeam = db.teamAssignmentValue(name, phone, place, location, "team_code");
         if (isTechnicianUser() && !assignmentId.isEmpty()) {
-            actionButton("تسليم للمشرف", Color.rgb(220, 38, 38), () -> finishTeamAssignment(assignmentTeam, assignmentId, name, phone, place, location));
+            actionButton("تسليم للمشرف", Color.rgb(220, 38, 38), () -> showDeliveryChecklistPage(assignmentTeam, assignmentId, name, phone, place, location));
         }
         secondaryButton("رجوع للعملاء", this::showCustomers);
     }
@@ -955,6 +1279,102 @@ public class MainActivity extends Activity {
             }
         });
         secondaryButton("رجوع", () -> showCustomerQuickActions(name, phone, place, location, status, extinguisherCount, totalPrice));
+    }
+
+    private void showDeliveryChecklistPage(String teamCode, String assignmentId, String name, String phone, String place, String location) {
+        currentTab = "delivery_checklist";
+        clear();
+        section("Checklist قبل التسليم");
+        int installationItems = customerInstallationItemCount(name, phone, place, location);
+        int installationAfterImages = customerInstallationAfterImageCount(name, phone, place, location);
+        int allImages = customerAllImageCount(name, phone, place, location);
+        card(name,
+                "رقم: " + safe(phone) +
+                        "\nاسم المكان: " + safe(place) +
+                        "\nبنود التركيبات: " + installationItems +
+                        "\nصور التركيبات بعد التنفيذ: " + installationAfterImages +
+                        "\nكل صور ومرفقات العميل: " + allImages);
+
+        CheckBox done = deliveryCheck("تم تنفيذ كل البنود المطلوبة للعميل");
+        CheckBox tested = deliveryCheck("تم اختبار الشغل والتأكد إنه سليم");
+        CheckBox photographed = deliveryCheck("تم تصوير الشغل بعد التنفيذ ورفع الصور");
+        CheckBox dataReviewed = deliveryCheck("راجعت بيانات العميل واللوكيشن والملاحظات");
+        CheckBox customerDelivered = deliveryCheck("تم تسليم العميل أو إبلاغه بانتهاء الشغل");
+
+        small("التسليم للمشرف مش هيتبعت إلا بعد اكتمال القائمة، ومع وجود صور موثقة للشغل.");
+        actionButton("تأكيد وتسليم للمشرف", Color.rgb(220, 38, 38), () -> {
+            ArrayList<String> missing = new ArrayList<>();
+            if (!done.isChecked()) missing.add("تنفيذ كل البنود");
+            if (!tested.isChecked()) missing.add("اختبار الشغل");
+            if (!photographed.isChecked()) missing.add("تصوير الشغل بعد التنفيذ");
+            if (!dataReviewed.isChecked()) missing.add("مراجعة بيانات العميل واللوكيشن");
+            if (!customerDelivered.isChecked()) missing.add("تسليم العميل أو إبلاغه");
+            if (allImages <= 0) missing.add("إضافة صورة واحدة على الأقل للعميل");
+            if (installationItems > 0 && installationAfterImages <= 0) missing.add("صور بعد التنفيذ لبنود التركيبات");
+            if (!missing.isEmpty()) {
+                showMissingChecklist(missing);
+                return;
+            }
+            finishTeamAssignment(teamCode, assignmentId, name, phone, place, location);
+        });
+        secondaryButton("رجوع لصفحة العميل", () -> openCustomerDetails(name, phone, place, location));
+    }
+
+    private CheckBox deliveryCheck(String text) {
+        CheckBox cb = new CheckBox(this);
+        cb.setText(text);
+        cb.setTextColor(TEXT);
+        cb.setTextSize(15);
+        cb.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        cb.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(22, 163, 74)));
+        cb.setPadding(dp(10), dp(8), dp(10), dp(8));
+        cb.setBackground(rounded(Color.WHITE, Color.rgb(226, 232, 240), dp(10)));
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.setMargins(0, dp(4), 0, dp(7));
+        content.addView(cb, lp);
+        return cb;
+    }
+
+    private void showMissingChecklist(ArrayList<String> missing) {
+        StringBuilder message = new StringBuilder("كمّل النواقص دي قبل التسليم:\n");
+        for (String item : missing) message.append("\n- ").append(item);
+        new AlertDialog.Builder(this)
+                .setTitle("Checklist ناقص")
+                .setMessage(message.toString())
+                .setPositiveButton("تمام", null)
+                .show();
+    }
+
+    private int customerInstallationItemCount(String name, String phone, String place, String location) {
+        return countRows("SELECT COUNT(*) FROM installation_items WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+    }
+
+    private int customerInstallationAfterImageCount(String name, String phone, String place, String location) {
+        return countRows("SELECT COUNT(*) FROM installation_images WHERE IFNULL(stage,'') LIKE '%بعد%' AND installation_id IN (" +
+                        "SELECT id FROM installation_items WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?)",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+    }
+
+    private int customerAllImageCount(String name, String phone, String place, String location) {
+        int total = countRows("SELECT COUNT(*) FROM customer_attachments WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+        total += countRows("SELECT COUNT(*) FROM installation_images WHERE installation_id IN (" +
+                        "SELECT id FROM installation_items WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?)",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+        total += countRows("SELECT COUNT(*) FROM extinguisher_images WHERE extinguisher_id IN (" +
+                        "SELECT id FROM extinguishers WHERE customer_name=? AND IFNULL(phone,'')=? AND IFNULL(place_name,'')=? AND IFNULL(location,'')=?)",
+                name, emptyForDb(phone), emptyForDb(place), emptyForDb(location));
+        return total;
+    }
+
+    private int countRows(String sql, String... args) {
+        Cursor c = db.raw(sql, args);
+        try {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        } finally {
+            c.close();
+        }
     }
 
     private void finishTeamAssignment(String teamCode, String assignmentId, String name, String phone, String place, String location) {
@@ -1018,7 +1438,7 @@ public class MainActivity extends Activity {
         String assignmentTeam = db.teamAssignmentValue(oldName, oldPhone, oldPlace, oldLocation, "team_code");
         if (isTechnicianUser() && !assignmentId.isEmpty()) {
             actionButton("تم التسليم للمشرف", Color.rgb(220, 38, 38), () ->
-                    finishTeamAssignment(assignmentTeam, assignmentId, oldName, oldPhone, oldPlace, oldLocation));
+                    showDeliveryChecklistPage(assignmentTeam, assignmentId, oldName, oldPhone, oldPlace, oldLocation));
         }
         secondaryButton("رجوع لقائمة العملاء", this::showCustomers);
 
