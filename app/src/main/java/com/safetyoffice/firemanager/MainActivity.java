@@ -64,6 +64,8 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.BufferedReader;
 import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -1253,6 +1255,16 @@ public class MainActivity extends Activity {
                 }
                 Coordinate coordinate = parseCoordinate(connection.getURL().toString());
                 if (coordinate != null) return coordinate;
+                String body = readSmallBody(connection);
+                coordinate = parseCoordinateFromMapPage(body);
+                if (coordinate != null) return coordinate;
+                String next = extractGoogleMapUrl(body, current);
+                if (!next.isEmpty() && !next.equals(current)) {
+                    current = next;
+                    continue;
+                }
+                coordinate = resolveFollowingRedirects(current);
+                if (coordinate != null) return coordinate;
                 if (code >= 200 && code < 400) return parseCoordinate(current);
                 return null;
             } catch (Exception ignored) {
@@ -1262,6 +1274,98 @@ public class MainActivity extends Activity {
             }
         }
         return parseCoordinate(current);
+    }
+
+    private Coordinate resolveFollowingRedirects(String link) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(link).openConnection();
+            connection.setInstanceFollowRedirects(true);
+            connection.setConnectTimeout(7000);
+            connection.setReadTimeout(7000);
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0");
+            connection.getResponseCode();
+            Coordinate coordinate = parseCoordinate(connection.getURL().toString());
+            if (coordinate != null) return coordinate;
+            return parseCoordinateFromMapPage(readSmallBody(connection));
+        } catch (Exception ignored) {
+            return null;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private String readSmallBody(HttpURLConnection connection) {
+        StringBuilder out = new StringBuilder();
+        InputStream input = null;
+        try {
+            input = connection.getInputStream();
+        } catch (Exception e) {
+            input = connection.getErrorStream();
+        }
+        if (input == null) return "";
+        try {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+            char[] buffer = new char[2048];
+            int total = 0;
+            int read;
+            while ((read = reader.read(buffer)) > 0 && total < 60000) {
+                out.append(buffer, 0, read);
+                total += read;
+            }
+        } catch (Exception ignored) {
+        } finally {
+            try {
+                input.close();
+            } catch (Exception ignored) {
+            }
+        }
+        return out.toString();
+    }
+
+    private Coordinate parseCoordinateFromMapPage(String body) {
+        String text = decodeMapPage(body);
+        Coordinate coordinate = parsePlaceDataCoordinate(text);
+        if (coordinate != null) return coordinate;
+        coordinate = parseAtCoordinate(text);
+        if (coordinate != null) return coordinate;
+        String url = extractGoogleMapUrl(text, "");
+        if (!url.isEmpty()) return parseCoordinate(url);
+        return null;
+    }
+
+    private String extractGoogleMapUrl(String body, String base) {
+        String text = decodeMapPage(body);
+        Matcher direct = Pattern.compile("https://(?:www\\.)?google\\.com/maps[^\\\"'<>\\\\\\s]+|https://maps\\.google\\.com/maps[^\\\"'<>\\\\\\s]+").matcher(text);
+        if (direct.find()) return direct.group();
+        Matcher encoded = Pattern.compile("https%3A%2F%2F(?:www%2E)?google\\.com%2Fmaps[^\\\"'<>\\\\\\s]+|https%3A%2F%2Fmaps\\.google\\.com%2Fmaps[^\\\"'<>\\\\\\s]+", Pattern.CASE_INSENSITIVE).matcher(text);
+        if (encoded.find()) {
+            try {
+                return Uri.decode(encoded.group());
+            } catch (Exception ignored) {
+            }
+        }
+        Matcher refresh = Pattern.compile("url=([^\\\"'<>\\s]+)", Pattern.CASE_INSENSITIVE).matcher(text);
+        if (refresh.find()) {
+            try {
+                return new URL(new URL(base), refresh.group(1)).toString();
+            } catch (Exception ignored) {
+            }
+        }
+        return "";
+    }
+
+    private String decodeMapPage(String body) {
+        String text = emptyForDb(body)
+                .replace("&amp;", "&")
+                .replace("\\u003d", "=")
+                .replace("\\u0026", "&")
+                .replace("\\/", "/");
+        try {
+            text = Uri.decode(text);
+        } catch (Exception ignored) {
+        }
+        return text;
     }
 
     private void replaceLocationEverywhere(String oldLocation, String newLocation) {
