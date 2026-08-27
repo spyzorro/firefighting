@@ -5,8 +5,8 @@ plugins {
 
 def githubRunNumberText = System.getenv("GITHUB_RUN_NUMBER") ?: "0"
 def githubRunNumber = githubRunNumberText ==~ /\d+/ ? githubRunNumberText.toInteger() : 0
-def autoVersionCode = githubRunNumber > 0 ? 521000 + githubRunNumber : 521001
-def autoVersionName = githubRunNumber > 0 ? "5.2.1.${githubRunNumber}" : "5.2.1"
+def autoVersionCode = githubRunNumber > 0 ? 522000 + githubRunNumber : 522001
+def autoVersionName = githubRunNumber > 0 ? "5.2.2.${githubRunNumber}" : "5.2.2"
 
 android {
     namespace "com.safetyoffice.firemanager"
