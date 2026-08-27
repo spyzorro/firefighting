@@ -961,11 +961,88 @@ public class MainActivity extends Activity {
                             "\nالحالة: " + safe(item.status.isEmpty() ? "جديد" : item.status) +
                             "\nلوكيشن: " + safe(item.location) +
                             distance);
+            if (!item.hasCoordinate && isShortGoogleMapLink(item.location)) {
+                actionButton("تثبيت رابط Google المختصر", Color.rgb(37, 99, 235), R.drawable.ic_action_maps,
+                        () -> showResolveShortLocationPage(item.name, item.phone, item.place, item.location));
+            }
             secondaryButton("فتح ملف العميل", () -> openCustomerDetails(item.name, item.phone, item.place, item.location));
             if (item.hasCoordinate) secondaryButton("فتح اللوكيشن", () -> openLocation(item.location));
             order++;
         }
         secondaryButton("رجوع", this::showHome);
+    }
+
+    private void showResolveShortLocationPage(String name, String phone, String place, String shortLocation) {
+        currentTab = "resolve_short_location";
+        clear();
+        section("تثبيت رابط Google المختصر");
+        card(name,
+                "الرابط المختصر محفوظ لكن محتاج يتحول لإحداثيات واضحة عشان يظهر على الخريطة ويتحسب في ترتيب الأقرب.");
+        EditText resolvedText = input("الرابط الطويل أو الإحداثيات lat,lng", InputType.TYPE_CLASS_TEXT);
+        resolvedText.setSingleLine(false);
+        resolvedText.setMinLines(2);
+        resolvedText.setText(shortLocation);
+
+        final String[] latestUrl = new String[]{shortLocation};
+        WebView browser = new WebView(this);
+        browser.getSettings().setJavaScriptEnabled(true);
+        browser.getSettings().setDomStorageEnabled(true);
+        browser.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                latestUrl[0] = url;
+                resolvedText.setText(url);
+                if (applyResolvedCustomerLocation(shortLocation, url, false)) return true;
+                String fallback = intentFallbackUrl(url);
+                if (!fallback.isEmpty()) {
+                    latestUrl[0] = fallback;
+                    resolvedText.setText(fallback);
+                    view.loadUrl(fallback);
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                latestUrl[0] = url;
+                resolvedText.setText(url);
+                if (applyResolvedCustomerLocation(shortLocation, url, false)) return;
+                try {
+                    view.evaluateJavascript(
+                            "(location.href+'\\n'+document.documentElement.innerText+'\\n'+document.documentElement.outerHTML).slice(0,100000)",
+                            value -> applyResolvedCustomerLocation(shortLocation, value, true));
+                } catch (Exception ignored) {
+                }
+            }
+        });
+        LinearLayout.LayoutParams webLp = new LinearLayout.LayoutParams(-1, dp(430));
+        webLp.setMargins(0, dp(8), 0, dp(10));
+        content.addView(browser, webLp);
+
+        actionButton("تثبيت الرابط/الإحداثيات المكتوبة", Color.rgb(22, 163, 74), () -> {
+            String value = txt(resolvedText);
+            if (!applyResolvedCustomerLocation(shortLocation, value, false)) {
+                toast("لسه مفيش إحداثيات واضحة. اكتب lat,lng أو افتح الرابط لحد ما يظهر الرابط الطويل.");
+            }
+        });
+        secondaryButton("فتح الرابط في Google Maps", () -> openLocation(shortLocation));
+        secondaryButton("رجوع للخريطة", this::showCustomerMap);
+
+        try {
+            browser.loadUrl(shortLocation);
+        } catch (Exception e) {
+            toast("تعذر فتح الرابط داخل التطبيق");
+        }
+    }
+
+    private boolean applyResolvedCustomerLocation(String oldLocation, String raw, boolean exactOnly) {
+        Coordinate coordinate = exactOnly ? parseExactMapCoordinate(raw) : parseResolvedGoogleMapCoordinate(raw, true);
+        if (coordinate == null) return false;
+        replaceLocationEverywhere(oldLocation, googleMapSearchLink(coordinate));
+        toast("تم تثبيت اللوكيشن الصحيح");
+        showCustomerMap();
+        return true;
     }
 
     private ArrayList<CustomerMapItem> customerMapItems() {
@@ -1304,6 +1381,17 @@ public class MainActivity extends Activity {
 
         resolver.setWebViewClient(new WebViewClient() {
             @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if (tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, url, true)) return true;
+                String fallback = intentFallbackUrl(url);
+                if (!fallback.isEmpty()) {
+                    view.loadUrl(fallback);
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, url, true);
                 if (finished[0]) return;
@@ -1324,11 +1412,11 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void tryFinishWebMapResolve(String oldLink, WebView resolver, Handler handler, Runnable timeout,
+    private boolean tryFinishWebMapResolve(String oldLink, WebView resolver, Handler handler, Runnable timeout,
                                         boolean[] finished, String raw, boolean allowAtCoordinate) {
-        if (finished[0]) return;
+        if (finished[0]) return true;
         Coordinate coordinate = parseResolvedGoogleMapCoordinate(raw, allowAtCoordinate);
-        if (coordinate == null) return;
+        if (coordinate == null) return false;
         finished[0] = true;
         handler.removeCallbacks(timeout);
         removeResolverWebView(resolver);
@@ -1339,6 +1427,21 @@ public class MainActivity extends Activity {
         replaceLocationEverywhere(oldLink, resolved);
         toast("تم تثبيت اللوكيشن من رابط Google Maps المختصر");
         if ("customer_map".equals(currentTab)) showCustomerMap();
+        return true;
+    }
+
+    private String intentFallbackUrl(String url) {
+        String value = emptyForDb(url);
+        if (!value.startsWith("intent://")) return "";
+        try {
+            Intent intent = Intent.parseUri(value, Intent.URI_INTENT_SCHEME);
+            String fallback = intent.getStringExtra("browser_fallback_url");
+            if (!emptyForDb(fallback).isEmpty()) return fallback;
+            String data = intent.getDataString();
+            return emptyForDb(data);
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private void removeResolverWebView(WebView resolver) {
