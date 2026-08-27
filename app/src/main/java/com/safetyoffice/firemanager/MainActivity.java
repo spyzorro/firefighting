@@ -1152,9 +1152,27 @@ public class MainActivity extends Activity {
         if (query != null) return query;
         Coordinate place = parsePlaceDataCoordinate(text);
         if (place != null) return place;
+        Coordinate dms = parseDmsCoordinate(text);
+        if (dms != null) return dms;
         Coordinate at = parseAtCoordinate(text);
         if (at != null) return at;
         return parseAnyCoordinate(text);
+    }
+
+    private Coordinate parseExactMapCoordinate(String value) {
+        String text = emptyForDb(value);
+        if (text.isEmpty()) return null;
+        try {
+            text = Uri.decode(text);
+        } catch (Exception ignored) {
+        }
+        Coordinate query = parseQueryCoordinate(text);
+        if (query != null) return query;
+        Coordinate dms = parseDmsCoordinate(text);
+        if (dms != null) return dms;
+        Coordinate place = parsePlaceDataCoordinate(text);
+        if (place != null) return place;
+        return null;
     }
 
     private Coordinate parseQueryCoordinate(String text) {
@@ -1173,8 +1191,30 @@ public class MainActivity extends Activity {
 
     private Coordinate parsePlaceDataCoordinate(String text) {
         Matcher matcher = Pattern.compile("!3d(-?\\d{1,3}(?:\\.\\d+)?)!4d(-?\\d{1,3}(?:\\.\\d+)?)").matcher(text);
-        if (matcher.find()) return coordinate(matcher.group(1), matcher.group(2));
+        Coordinate last = null;
+        while (matcher.find()) {
+            Coordinate coordinate = coordinate(matcher.group(1), matcher.group(2));
+            if (coordinate != null) last = coordinate;
+        }
+        return last;
+    }
+
+    private Coordinate parseDmsCoordinate(String text) {
+        Matcher matcher = Pattern.compile("(\\d{1,3})°(\\d{1,2})'(\\d+(?:\\.\\d+)?)\\\"\\s*([NS])\\s*[+ ]\\s*(\\d{1,3})°(\\d{1,2})'(\\d+(?:\\.\\d+)?)\\\"\\s*([EW])", Pattern.CASE_INSENSITIVE).matcher(text);
+        if (!matcher.find()) return null;
+        try {
+            double lat = dmsToDecimal(matcher.group(1), matcher.group(2), matcher.group(3), matcher.group(4));
+            double lng = dmsToDecimal(matcher.group(5), matcher.group(6), matcher.group(7), matcher.group(8));
+            if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return new Coordinate(lat, lng);
+        } catch (Exception ignored) {
+        }
         return null;
+    }
+
+    private double dmsToDecimal(String degrees, String minutes, String seconds, String direction) {
+        double value = Double.parseDouble(degrees) + (Double.parseDouble(minutes) / 60.0) + (Double.parseDouble(seconds) / 3600.0);
+        String dir = emptyForDb(direction).toUpperCase(Locale.US);
+        return ("S".equals(dir) || "W".equals(dir)) ? -value : value;
     }
 
     private Coordinate parseAtCoordinate(String text) {
@@ -1249,11 +1289,11 @@ public class MainActivity extends Activity {
                 String location = connection.getHeaderField("Location");
                 if (location != null && !location.trim().isEmpty()) {
                     current = new URL(new URL(current), location).toString();
-                    Coordinate coordinate = parseCoordinate(current);
+                    Coordinate coordinate = parseExactMapCoordinate(current);
                     if (coordinate != null) return coordinate;
                     continue;
                 }
-                Coordinate coordinate = parseCoordinate(connection.getURL().toString());
+                Coordinate coordinate = parseExactMapCoordinate(connection.getURL().toString());
                 if (coordinate != null) return coordinate;
                 String body = readSmallBody(connection);
                 coordinate = parseCoordinateFromMapPage(body);
@@ -1265,7 +1305,7 @@ public class MainActivity extends Activity {
                 }
                 coordinate = resolveFollowingRedirects(current);
                 if (coordinate != null) return coordinate;
-                if (code >= 200 && code < 400) return parseCoordinate(current);
+                if (code >= 200 && code < 400) return parseExactMapCoordinate(current);
                 return null;
             } catch (Exception ignored) {
                 return null;
@@ -1273,7 +1313,7 @@ public class MainActivity extends Activity {
                 if (connection != null) connection.disconnect();
             }
         }
-        return parseCoordinate(current);
+        return parseExactMapCoordinate(current);
     }
 
     private Coordinate resolveFollowingRedirects(String link) {
@@ -1285,7 +1325,7 @@ public class MainActivity extends Activity {
             connection.setReadTimeout(7000);
             connection.setRequestProperty("User-Agent", "Mozilla/5.0");
             connection.getResponseCode();
-            Coordinate coordinate = parseCoordinate(connection.getURL().toString());
+            Coordinate coordinate = parseExactMapCoordinate(connection.getURL().toString());
             if (coordinate != null) return coordinate;
             return parseCoordinateFromMapPage(readSmallBody(connection));
         } catch (Exception ignored) {
@@ -1325,12 +1365,10 @@ public class MainActivity extends Activity {
 
     private Coordinate parseCoordinateFromMapPage(String body) {
         String text = decodeMapPage(body);
-        Coordinate coordinate = parsePlaceDataCoordinate(text);
-        if (coordinate != null) return coordinate;
-        coordinate = parseAtCoordinate(text);
+        Coordinate coordinate = parseExactMapCoordinate(text);
         if (coordinate != null) return coordinate;
         String url = extractGoogleMapUrl(text, "");
-        if (!url.isEmpty()) return parseCoordinate(url);
+        if (!url.isEmpty()) return parseExactMapCoordinate(url);
         return null;
     }
 
