@@ -65,6 +65,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -147,6 +148,7 @@ public class MainActivity extends Activity {
     private double mapCurrentLat = Double.NaN;
     private double mapCurrentLng = Double.NaN;
     private final ArrayList<CustomerMapItem> activeMapItems = new ArrayList<>();
+    private final HashSet<String> pendingShortMapResolves = new HashSet<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -992,6 +994,8 @@ public class MainActivity extends Activity {
                     item.hasCoordinate = true;
                     item.lat = coordinate.lat;
                     item.lng = coordinate.lng;
+                } else if (isShortGoogleMapLink(item.location)) {
+                    resolveShortMapLinkAsync(item.location);
                 }
                 items.add(item);
             }
@@ -1142,16 +1146,138 @@ public class MainActivity extends Activity {
             text = Uri.decode(text);
         } catch (Exception ignored) {
         }
+        Coordinate query = parseQueryCoordinate(text);
+        if (query != null) return query;
+        Coordinate place = parsePlaceDataCoordinate(text);
+        if (place != null) return place;
+        Coordinate at = parseAtCoordinate(text);
+        if (at != null) return at;
+        return parseAnyCoordinate(text);
+    }
+
+    private Coordinate parseQueryCoordinate(String text) {
+        try {
+            Uri uri = Uri.parse(text);
+            Coordinate q = parseAnyCoordinate(uri.getQueryParameter("q"));
+            if (q != null) return q;
+            Coordinate query = parseAnyCoordinate(uri.getQueryParameter("query"));
+            if (query != null) return query;
+        } catch (Exception ignored) {
+        }
+        Matcher matcher = Pattern.compile("[?&](?:q|query)=(-?\\d{1,3}(?:\\.\\d+)?)%?2?C(-?\\d{1,3}(?:\\.\\d+)?)", Pattern.CASE_INSENSITIVE).matcher(text);
+        if (matcher.find()) return coordinate(matcher.group(1), matcher.group(2));
+        return null;
+    }
+
+    private Coordinate parsePlaceDataCoordinate(String text) {
+        Matcher matcher = Pattern.compile("!3d(-?\\d{1,3}(?:\\.\\d+)?)!4d(-?\\d{1,3}(?:\\.\\d+)?)").matcher(text);
+        if (matcher.find()) return coordinate(matcher.group(1), matcher.group(2));
+        return null;
+    }
+
+    private Coordinate parseAtCoordinate(String text) {
+        Matcher matcher = Pattern.compile("@(-?\\d{1,3}(?:\\.\\d+)?),(-?\\d{1,3}(?:\\.\\d+)?)").matcher(text);
+        if (matcher.find()) return coordinate(matcher.group(1), matcher.group(2));
+        return null;
+    }
+
+    private Coordinate parseAnyCoordinate(String text) {
+        if (text == null) return null;
         Matcher matcher = Pattern.compile("(-?\\d{1,3}(?:\\.\\d+)?)\\s*,\\s*(-?\\d{1,3}(?:\\.\\d+)?)").matcher(text);
         while (matcher.find()) {
-            try {
-                double lat = Double.parseDouble(matcher.group(1));
-                double lng = Double.parseDouble(matcher.group(2));
-                if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return new Coordinate(lat, lng);
-            } catch (Exception ignored) {
-            }
+            Coordinate coordinate = coordinate(matcher.group(1), matcher.group(2));
+            if (coordinate != null) return coordinate;
         }
         return null;
+    }
+
+    private Coordinate coordinate(String latText, String lngText) {
+        try {
+            double lat = Double.parseDouble(latText);
+            double lng = Double.parseDouble(lngText);
+            if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return new Coordinate(lat, lng);
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private boolean isShortGoogleMapLink(String value) {
+        String lower = emptyForDb(value).toLowerCase(Locale.US);
+        return lower.contains("maps.app.goo.gl") || lower.contains("goo.gl/maps");
+    }
+
+    private String googleMapSearchLink(Coordinate coordinate) {
+        return String.format(Locale.US, "https://www.google.com/maps/search/?api=1&query=%.7f,%.7f",
+                coordinate.lat, coordinate.lng);
+    }
+
+    private void resolveShortMapLinkAsync(String shortLink) {
+        String clean = emptyForDb(shortLink).trim();
+        if (clean.isEmpty()) return;
+        synchronized (pendingShortMapResolves) {
+            if (pendingShortMapResolves.contains(clean)) return;
+            pendingShortMapResolves.add(clean);
+        }
+        new Thread(() -> {
+            Coordinate coordinate = resolveShortMapCoordinate(clean);
+            synchronized (pendingShortMapResolves) {
+                pendingShortMapResolves.remove(clean);
+            }
+            if (coordinate == null) return;
+            String resolved = googleMapSearchLink(coordinate);
+            runOnUiThread(() -> {
+                replaceLocationEverywhere(clean, resolved);
+                toast("تم قراءة رابط Google Maps المختصر وتحديث اللوكيشن");
+                if ("customer_map".equals(currentTab)) showCustomerMap();
+            });
+        }).start();
+    }
+
+    private Coordinate resolveShortMapCoordinate(String shortLink) {
+        String current = shortLink;
+        for (int i = 0; i < 6; i++) {
+            HttpURLConnection connection = null;
+            try {
+                connection = (HttpURLConnection) new URL(current).openConnection();
+                connection.setInstanceFollowRedirects(false);
+                connection.setConnectTimeout(7000);
+                connection.setReadTimeout(7000);
+                connection.setRequestProperty("User-Agent", "Mozilla/5.0");
+                int code = connection.getResponseCode();
+                String location = connection.getHeaderField("Location");
+                if (location != null && !location.trim().isEmpty()) {
+                    current = new URL(new URL(current), location).toString();
+                    Coordinate coordinate = parseCoordinate(current);
+                    if (coordinate != null) return coordinate;
+                    continue;
+                }
+                Coordinate coordinate = parseCoordinate(connection.getURL().toString());
+                if (coordinate != null) return coordinate;
+                if (code >= 200 && code < 400) return parseCoordinate(current);
+                return null;
+            } catch (Exception ignored) {
+                return null;
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }
+        return parseCoordinate(current);
+    }
+
+    private void replaceLocationEverywhere(String oldLocation, String newLocation) {
+        String oldValue = emptyForDb(oldLocation);
+        String newValue = emptyForDb(newLocation);
+        if (oldValue.isEmpty() || newValue.isEmpty() || oldValue.equals(newValue)) return;
+        ContentValues cv = new ContentValues();
+        cv.put("location", newValue);
+        db.update("customers", cv, "location=?", oldValue);
+        db.update("extinguishers", cv, "location=?", oldValue);
+        db.update("safety_certificates", cv, "location=?", oldValue);
+        db.update("technical_reports", cv, "location=?", oldValue);
+        db.update("maintenance_contracts", cv, "location=?", oldValue);
+        db.update("installation_items", cv, "location=?", oldValue);
+        db.update("customer_attachments", cv, "location=?", oldValue);
+        db.update("team_assignments", cv, "location=?", oldValue);
     }
 
     private double distanceMeters(double lat1, double lng1, double lat2, double lng2) {
