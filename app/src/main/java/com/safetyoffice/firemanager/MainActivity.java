@@ -1037,7 +1037,7 @@ public class MainActivity extends Activity {
             CustomerMapItem item = items.get(i);
             if (!item.hasCoordinate) continue;
             String popup = "<div style='direction:rtl;text-align:right;min-width:150px'><b>" +
-                    htmlEscape(item.name) + "</b><br>" + htmlEscape(item.place) +
+                    escapeHtmlText(item.name) + "</b><br>" + escapeHtmlText(item.place) +
                     "<br><button onclick='FireManager.openCustomer(" + i + ")'>فتح العميل</button></div>";
             markers.append("addMarker(")
                     .append(String.format(Locale.US, "%.7f,%.7f,", item.lat, item.lng))
@@ -1168,15 +1168,6 @@ public class MainActivity extends Activity {
         if (meters == Double.MAX_VALUE) return "-";
         if (meters < 1000) return Math.round(meters) + " متر";
         return cleanNumber(meters / 1000.0) + " كم";
-    }
-
-    private String htmlEscape(String value) {
-        return emptyForDb(value)
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;")
-                .replace("'", "&#39;");
     }
 
     private class CustomerMapBridge {
@@ -4111,7 +4102,7 @@ public class MainActivity extends Activity {
         html.append("\ufeff<html><head><meta charset=\"UTF-8\"></head>");
         html.append("<body dir=\"rtl\" style=\"font-family:Arial;\">");
         html.append("<h2>تقرير الشهر الحالي</h2>");
-        html.append("<p>تاريخ التصدير: ").append(htmlEscape(ReminderScheduler.formatDate(System.currentTimeMillis()))).append("</p>");
+        html.append("<p>تاريخ التصدير: ").append(escapeHtmlText(ReminderScheduler.formatDate(System.currentTimeMillis()))).append("</p>");
         appendExcelSummary(html, range);
         appendExcelExtinguishers(html, range);
         appendExcelSimpleTable(html, "شهادات السلامة",
@@ -4172,9 +4163,9 @@ public class MainActivity extends Activity {
 
     private void appendExcelSimpleTable(StringBuilder html, String title, String[] headers, String sql,
                                         long[] range, int[] dateColumns, int[] moneyColumns) {
-        html.append("<h3>").append(htmlEscape(title)).append("</h3>");
+        html.append("<h3>").append(escapeHtmlText(title)).append("</h3>");
         html.append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\"><tr>");
-        for (String header : headers) html.append("<th>").append(htmlEscape(header)).append("</th>");
+        for (String header : headers) html.append("<th>").append(escapeHtmlText(header)).append("</th>");
         html.append("</tr>");
         Cursor c = db.raw(sql, String.valueOf(range[0]), String.valueOf(range[1]));
         try {
@@ -4186,7 +4177,7 @@ public class MainActivity extends Activity {
                     else if (containsIndex(moneyColumns, i)) value = money(c.getDouble(i));
                     else if (title.equals("الطفايات") && i == headers.length - 1) value = yesNoLabel(c.getInt(i));
                     else value = safe(c.getString(i));
-                    html.append("<td>").append(htmlEscape(value)).append("</td>");
+                    html.append("<td>").append(escapeHtmlText(value)).append("</td>");
                 }
                 html.append("</tr>");
             }
@@ -4198,7 +4189,7 @@ public class MainActivity extends Activity {
 
     private void appendExcelRow(StringBuilder html, String... values) {
         html.append("<tr>");
-        for (String value : values) html.append("<td>").append(htmlEscape(value)).append("</td>");
+        for (String value : values) html.append("<td>").append(escapeHtmlText(value)).append("</td>");
         html.append("</tr>");
     }
 
@@ -4207,7 +4198,7 @@ public class MainActivity extends Activity {
         return false;
     }
 
-    private String htmlEscape(String value) {
+    private String escapeHtmlText(String value) {
         return safe(value)
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
