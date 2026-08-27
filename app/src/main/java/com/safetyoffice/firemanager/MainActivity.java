@@ -36,6 +36,7 @@ import android.speech.SpeechRecognizer;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -997,7 +998,7 @@ public class MainActivity extends Activity {
                     item.lat = coordinate.lat;
                     item.lng = coordinate.lng;
                 } else if (isShortGoogleMapLink(item.location)) {
-                    resolveShortMapLinkAsync(item.location);
+                    resolveShortMapLinkWithWebView(item.location);
                 }
                 items.add(item);
             }
@@ -1273,6 +1274,91 @@ public class MainActivity extends Activity {
                 if ("customer_map".equals(currentTab)) showCustomerMap();
             });
         }).start();
+    }
+
+    private void resolveShortMapLinkWithWebView(String shortLink) {
+        String clean = emptyForDb(shortLink).trim();
+        if (clean.isEmpty()) return;
+        synchronized (pendingShortMapResolves) {
+            if (pendingShortMapResolves.contains(clean)) return;
+            pendingShortMapResolves.add(clean);
+        }
+
+        WebView resolver = new WebView(this);
+        resolver.getSettings().setJavaScriptEnabled(true);
+        resolver.getSettings().setDomStorageEnabled(true);
+        resolver.setAlpha(0f);
+        content.addView(resolver, new LinearLayout.LayoutParams(1, 1));
+
+        Handler handler = new Handler(Looper.getMainLooper());
+        boolean[] finished = new boolean[]{false};
+        Runnable timeout = () -> {
+            if (finished[0]) return;
+            finished[0] = true;
+            removeResolverWebView(resolver);
+            synchronized (pendingShortMapResolves) {
+                pendingShortMapResolves.remove(clean);
+            }
+            resolveShortMapLinkAsync(clean);
+        };
+
+        resolver.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, url, true);
+                if (finished[0]) return;
+                try {
+                    view.evaluateJavascript(
+                            "(location.href+'\\n'+document.documentElement.innerText+'\\n'+document.documentElement.outerHTML).slice(0,100000)",
+                            value -> tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, value, false));
+                } catch (Exception ignored) {
+                }
+            }
+        });
+
+        handler.postDelayed(timeout, 15000);
+        try {
+            resolver.loadUrl(clean);
+        } catch (Exception e) {
+            timeout.run();
+        }
+    }
+
+    private void tryFinishWebMapResolve(String oldLink, WebView resolver, Handler handler, Runnable timeout,
+                                        boolean[] finished, String raw, boolean allowAtCoordinate) {
+        if (finished[0]) return;
+        Coordinate coordinate = parseResolvedGoogleMapCoordinate(raw, allowAtCoordinate);
+        if (coordinate == null) return;
+        finished[0] = true;
+        handler.removeCallbacks(timeout);
+        removeResolverWebView(resolver);
+        synchronized (pendingShortMapResolves) {
+            pendingShortMapResolves.remove(oldLink);
+        }
+        String resolved = googleMapSearchLink(coordinate);
+        replaceLocationEverywhere(oldLink, resolved);
+        toast("تم تثبيت اللوكيشن من رابط Google Maps المختصر");
+        if ("customer_map".equals(currentTab)) showCustomerMap();
+    }
+
+    private void removeResolverWebView(WebView resolver) {
+        try {
+            resolver.stopLoading();
+            ViewGroup parent = (ViewGroup) resolver.getParent();
+            if (parent != null) parent.removeView(resolver);
+            resolver.destroy();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private Coordinate parseResolvedGoogleMapCoordinate(String value, boolean allowAtCoordinate) {
+        String text = decodeMapPage(value);
+        Coordinate exact = parseExactMapCoordinate(text);
+        if (exact != null) return exact;
+        if (!allowAtCoordinate) return null;
+        Coordinate at = parseAtCoordinate(text);
+        if (at != null) return at;
+        return null;
     }
 
     private Coordinate resolveShortMapCoordinate(String shortLink) {
