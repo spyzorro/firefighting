@@ -283,8 +283,8 @@ public class MainActivity extends Activity {
         LinearLayout tabs = new LinearLayout(this);
         tabs.setOrientation(LinearLayout.HORIZONTAL);
         addTab(tabs, "تسجيل", R.drawable.ic_nav_extinguisher, v -> showExtinguishers());
-        addTab(tabs, "العملاء", R.drawable.ic_nav_customers, v -> showCustomers());
         addTab(tabs, "الخريطة", R.drawable.ic_nav_map, v -> showCustomerMap());
+        addTab(tabs, "العملاء", R.drawable.ic_nav_customers, v -> showCustomers());
         addTab(tabs, "تركيبات", R.drawable.ic_nav_tasks, v -> showInstallations());
         addTab(tabs, "عقود", R.drawable.ic_nav_alerts, v -> showMaintenance());
         addTab(tabs, "تنبيهات", R.drawable.ic_nav_alerts, v -> showAlerts());
@@ -329,6 +329,7 @@ public class MainActivity extends Activity {
             hero("تكليفاتي",
                     "هذه نسخة الفني. لن يظهر هنا إلا العملاء الذين حولهم لك المشرف بالكود.");
             button("استلام التكليفات المرسلة لي", this::showSync);
+            button("خريطة العملاء", this::showCustomerMap);
             section("اختصارات");
             homeAction("العملاء المحولون", "الشغل المرسل لك فقط", this::showCustomers);
             homeAction("خريطة العملاء", "الأقرب فالأبعد حسب اللوكيشن", this::showCustomerMap);
@@ -354,6 +355,7 @@ public class MainActivity extends Activity {
                 "نسبتك الإجمالية: " + money(shareTotal) +
                         "\nعدد شهادات السلامة: " + certificates);
         button("تسجيل عميل وطفايات بسرعة", this::showExtinguishers);
+        button("خريطة العملاء", this::showCustomerMap);
         section("اختصارات");
         homeAction("العملاء", "بحث وتغيير حالة وواتساب", this::showCustomers);
         homeAction("خريطة العملاء", "علامات العملاء وترتيب الزيارات", this::showCustomerMap);
@@ -831,6 +833,7 @@ public class MainActivity extends Activity {
         currentTab = "customers";
         clear();
         section("العملاء");
+        button("فتح خريطة العملاء", this::showCustomerMap);
         EditText search = input("بحث باسم العميل أو الرقم", InputType.TYPE_CLASS_TEXT);
         search.setText(customerSearch);
         button("بحث سريع", () -> {
@@ -1165,15 +1168,6 @@ public class MainActivity extends Activity {
         if (meters == Double.MAX_VALUE) return "-";
         if (meters < 1000) return Math.round(meters) + " متر";
         return cleanNumber(meters / 1000.0) + " كم";
-    }
-
-    private String htmlEscape(String value) {
-        return emptyForDb(value)
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;")
-                .replace("'", "&#39;");
     }
 
     private class CustomerMapBridge {
