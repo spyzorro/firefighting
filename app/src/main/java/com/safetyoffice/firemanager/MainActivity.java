@@ -47,6 +47,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.webkit.JavascriptInterface;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
@@ -989,18 +990,14 @@ public class MainActivity extends Activity {
         browser.getSettings().setDomStorageEnabled(true);
         browser.setWebViewClient(new WebViewClient() {
             @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String url = request == null || request.getUrl() == null ? "" : request.getUrl().toString();
+                return handleVisibleMapUrl(view, shortLocation, resolvedText, url);
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                latestUrl[0] = url;
-                resolvedText.setText(url);
-                if (applyResolvedCustomerLocation(shortLocation, url, false)) return true;
-                String fallback = intentFallbackUrl(url);
-                if (!fallback.isEmpty()) {
-                    latestUrl[0] = fallback;
-                    resolvedText.setText(fallback);
-                    view.loadUrl(fallback);
-                    return true;
-                }
-                return false;
+                return handleVisibleMapUrl(view, shortLocation, resolvedText, url);
             }
 
             @Override
@@ -1008,6 +1005,8 @@ public class MainActivity extends Activity {
                 latestUrl[0] = url;
                 resolvedText.setText(url);
                 if (applyResolvedCustomerLocation(shortLocation, url, false)) return;
+                scheduleVisibleMapUrlCheck(view, shortLocation, resolvedText, 1200);
+                scheduleVisibleMapUrlCheck(view, shortLocation, resolvedText, 3500);
                 try {
                     view.evaluateJavascript(
                             "(location.href+'\\n'+document.documentElement.innerText+'\\n'+document.documentElement.outerHTML).slice(0,100000)",
@@ -1034,6 +1033,31 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             toast("تعذر فتح الرابط داخل التطبيق");
         }
+    }
+
+    private boolean handleVisibleMapUrl(WebView view, String shortLocation, EditText resolvedText, String url) {
+        resolvedText.setText(emptyForDb(url));
+        if (applyResolvedCustomerLocation(shortLocation, url, false)) return true;
+        String fallback = intentFallbackUrl(url);
+        if (!fallback.isEmpty()) {
+            resolvedText.setText(fallback);
+            if (applyResolvedCustomerLocation(shortLocation, fallback, false)) return true;
+            view.loadUrl(fallback);
+            return true;
+        }
+        return false;
+    }
+
+    private void scheduleVisibleMapUrlCheck(WebView view, String shortLocation, EditText resolvedText, long delayMs) {
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                view.evaluateJavascript("location.href", value -> {
+                    resolvedText.setText(decodeMapPage(value));
+                    applyResolvedCustomerLocation(shortLocation, value, false);
+                });
+            } catch (Exception ignored) {
+            }
+        }, delayMs);
     }
 
     private boolean applyResolvedCustomerLocation(String oldLocation, String raw, boolean exactOnly) {
@@ -1376,25 +1400,27 @@ public class MainActivity extends Activity {
             synchronized (pendingShortMapResolves) {
                 pendingShortMapResolves.remove(clean);
             }
-            resolveShortMapLinkAsync(clean);
         };
 
         resolver.setWebViewClient(new WebViewClient() {
             @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String url = request == null || request.getUrl() == null ? "" : request.getUrl().toString();
+                return handleHiddenMapUrl(view, clean, resolver, handler, timeout, finished, url);
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                if (tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, url, true)) return true;
-                String fallback = intentFallbackUrl(url);
-                if (!fallback.isEmpty()) {
-                    view.loadUrl(fallback);
-                    return true;
-                }
-                return false;
+                return handleHiddenMapUrl(view, clean, resolver, handler, timeout, finished, url);
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, url, true);
                 if (finished[0]) return;
+                scheduleHiddenMapUrlCheck(view, clean, resolver, handler, timeout, finished, 1200);
+                scheduleHiddenMapUrlCheck(view, clean, resolver, handler, timeout, finished, 3500);
+                scheduleHiddenMapUrlCheck(view, clean, resolver, handler, timeout, finished, 7000);
                 try {
                     view.evaluateJavascript(
                             "(location.href+'\\n'+document.documentElement.innerText+'\\n'+document.documentElement.outerHTML).slice(0,100000)",
@@ -1410,6 +1436,30 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             timeout.run();
         }
+    }
+
+    private boolean handleHiddenMapUrl(WebView view, String clean, WebView resolver, Handler handler, Runnable timeout,
+                                       boolean[] finished, String url) {
+        if (tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, url, true)) return true;
+        String fallback = intentFallbackUrl(url);
+        if (!fallback.isEmpty()) {
+            if (tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, fallback, true)) return true;
+            view.loadUrl(fallback);
+            return true;
+        }
+        return false;
+    }
+
+    private void scheduleHiddenMapUrlCheck(WebView view, String clean, WebView resolver, Handler handler, Runnable timeout,
+                                           boolean[] finished, long delayMs) {
+        handler.postDelayed(() -> {
+            if (finished[0]) return;
+            try {
+                view.evaluateJavascript("location.href",
+                        value -> tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, value, true));
+            } catch (Exception ignored) {
+            }
+        }, delayMs);
     }
 
     private boolean tryFinishWebMapResolve(String oldLink, WebView resolver, Handler handler, Runnable timeout,
