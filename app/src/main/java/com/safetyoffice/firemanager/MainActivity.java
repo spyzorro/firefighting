@@ -36,7 +36,6 @@ import android.speech.SpeechRecognizer;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -66,10 +65,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.BufferedReader;
 import java.io.OutputStreamWriter;
-import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -963,11 +959,11 @@ public class MainActivity extends Activity {
                             "\nلوكيشن: " + safe(item.location) +
                             distance);
             if (!item.hasCoordinate && isShortGoogleMapLink(item.location)) {
-                actionButton("تثبيت رابط Google المختصر", Color.rgb(37, 99, 235), R.drawable.ic_action_maps,
+                actionButton("فتح Google Maps وتثبيت يدوي", Color.rgb(37, 99, 235), R.drawable.ic_action_maps,
                         () -> showResolveShortLocationPage(item.name, item.phone, item.place, item.location));
             }
             secondaryButton("فتح ملف العميل", () -> openCustomerDetails(item.name, item.phone, item.place, item.location));
-            if (item.hasCoordinate) secondaryButton("فتح اللوكيشن", () -> openLocation(item.location));
+            if (item.hasCoordinate || isShortGoogleMapLink(item.location)) secondaryButton("فتح اللوكيشن", () -> openLocation(item.location));
             order++;
         }
         secondaryButton("رجوع", this::showHome);
@@ -978,7 +974,7 @@ public class MainActivity extends Activity {
         clear();
         section("تثبيت رابط Google المختصر");
         card(name,
-                "الرابط المختصر محفوظ لكن محتاج يتحول لإحداثيات واضحة عشان يظهر على الخريطة ويتحسب في ترتيب الأقرب.");
+                "الرابط المختصر يفتح في Google Maps، لكن التطبيق لن يحوله تلقائيا حتى لا يحفظ مكان غلط. ثبته فقط لما يكون عندك رابط طويل بإحداثيات أو lat,lng.");
         EditText resolvedText = input("الرابط الطويل أو الإحداثيات lat,lng", InputType.TYPE_CLASS_TEXT);
         resolvedText.setSingleLine(false);
         resolvedText.setMinLines(2);
@@ -1004,25 +1000,18 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 latestUrl[0] = url;
                 resolvedText.setText(url);
-                if (applyResolvedCustomerLocation(shortLocation, url, false)) return;
                 scheduleVisibleMapUrlCheck(view, shortLocation, resolvedText, 1200);
                 scheduleVisibleMapUrlCheck(view, shortLocation, resolvedText, 3500);
-                try {
-                    view.evaluateJavascript(
-                            "(location.href+'\\n'+document.documentElement.innerText+'\\n'+document.documentElement.outerHTML).slice(0,100000)",
-                            value -> applyResolvedCustomerLocation(shortLocation, value, true));
-                } catch (Exception ignored) {
-                }
             }
         });
         LinearLayout.LayoutParams webLp = new LinearLayout.LayoutParams(-1, dp(430));
         webLp.setMargins(0, dp(8), 0, dp(10));
         content.addView(browser, webLp);
 
-        actionButton("تثبيت الرابط/الإحداثيات المكتوبة", Color.rgb(22, 163, 74), () -> {
+        actionButton("تثبيت الإحداثيات المكتوبة فقط", Color.rgb(22, 163, 74), () -> {
             String value = txt(resolvedText);
-            if (!applyResolvedCustomerLocation(shortLocation, value, false)) {
-                toast("لسه مفيش إحداثيات واضحة. اكتب lat,lng أو افتح الرابط لحد ما يظهر الرابط الطويل.");
+            if (!applyManualCustomerLocation(shortLocation, value)) {
+                toast("اكتب الإحداثيات بصيغة lat,lng أو رابط طويل فيه q= أو !3d/!4d");
             }
         });
         secondaryButton("فتح الرابط في Google Maps", () -> openLocation(shortLocation));
@@ -1037,11 +1026,9 @@ public class MainActivity extends Activity {
 
     private boolean handleVisibleMapUrl(WebView view, String shortLocation, EditText resolvedText, String url) {
         resolvedText.setText(emptyForDb(url));
-        if (applyResolvedCustomerLocation(shortLocation, url, false)) return true;
         String fallback = intentFallbackUrl(url);
         if (!fallback.isEmpty()) {
             resolvedText.setText(fallback);
-            if (applyResolvedCustomerLocation(shortLocation, fallback, false)) return true;
             view.loadUrl(fallback);
             return true;
         }
@@ -1053,15 +1040,18 @@ public class MainActivity extends Activity {
             try {
                 view.evaluateJavascript("location.href", value -> {
                     resolvedText.setText(decodeMapPage(value));
-                    applyResolvedCustomerLocation(shortLocation, value, false);
                 });
             } catch (Exception ignored) {
             }
         }, delayMs);
     }
 
-    private boolean applyResolvedCustomerLocation(String oldLocation, String raw, boolean exactOnly) {
-        Coordinate coordinate = exactOnly ? parseExactMapCoordinate(raw) : parseResolvedGoogleMapCoordinate(raw, true);
+    private boolean applyManualCustomerLocation(String oldLocation, String raw) {
+        Coordinate coordinate = parseExactMapCoordinate(raw);
+        String decoded = decodeMapPage(raw);
+        if (coordinate == null && !decoded.toLowerCase(Locale.US).contains("http")) {
+            coordinate = parseAnyCoordinate(decoded);
+        }
         if (coordinate == null) return false;
         replaceLocationEverywhere(oldLocation, googleMapSearchLink(coordinate));
         toast("تم تثبيت اللوكيشن الصحيح");
@@ -1098,8 +1088,6 @@ public class MainActivity extends Activity {
                     item.hasCoordinate = true;
                     item.lat = coordinate.lat;
                     item.lng = coordinate.lng;
-                } else if (isShortGoogleMapLink(item.location)) {
-                    resolveShortMapLinkWithWebView(item.location);
                 }
                 items.add(item);
             }
@@ -1355,131 +1343,6 @@ public class MainActivity extends Activity {
                 coordinate.lat, coordinate.lng);
     }
 
-    private void resolveShortMapLinkAsync(String shortLink) {
-        String clean = emptyForDb(shortLink).trim();
-        if (clean.isEmpty()) return;
-        synchronized (pendingShortMapResolves) {
-            if (pendingShortMapResolves.contains(clean)) return;
-            pendingShortMapResolves.add(clean);
-        }
-        new Thread(() -> {
-            Coordinate coordinate = resolveShortMapCoordinate(clean);
-            synchronized (pendingShortMapResolves) {
-                pendingShortMapResolves.remove(clean);
-            }
-            if (coordinate == null) return;
-            String resolved = googleMapSearchLink(coordinate);
-            runOnUiThread(() -> {
-                replaceLocationEverywhere(clean, resolved);
-                toast("تم قراءة رابط Google Maps المختصر وتحديث اللوكيشن");
-                if ("customer_map".equals(currentTab)) showCustomerMap();
-            });
-        }).start();
-    }
-
-    private void resolveShortMapLinkWithWebView(String shortLink) {
-        String clean = emptyForDb(shortLink).trim();
-        if (clean.isEmpty()) return;
-        synchronized (pendingShortMapResolves) {
-            if (pendingShortMapResolves.contains(clean)) return;
-            pendingShortMapResolves.add(clean);
-        }
-
-        WebView resolver = new WebView(this);
-        resolver.getSettings().setJavaScriptEnabled(true);
-        resolver.getSettings().setDomStorageEnabled(true);
-        resolver.setAlpha(0f);
-        content.addView(resolver, new LinearLayout.LayoutParams(1, 1));
-
-        Handler handler = new Handler(Looper.getMainLooper());
-        boolean[] finished = new boolean[]{false};
-        Runnable timeout = () -> {
-            if (finished[0]) return;
-            finished[0] = true;
-            removeResolverWebView(resolver);
-            synchronized (pendingShortMapResolves) {
-                pendingShortMapResolves.remove(clean);
-            }
-        };
-
-        resolver.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                String url = request == null || request.getUrl() == null ? "" : request.getUrl().toString();
-                return handleHiddenMapUrl(view, clean, resolver, handler, timeout, finished, url);
-            }
-
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return handleHiddenMapUrl(view, clean, resolver, handler, timeout, finished, url);
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, url, true);
-                if (finished[0]) return;
-                scheduleHiddenMapUrlCheck(view, clean, resolver, handler, timeout, finished, 1200);
-                scheduleHiddenMapUrlCheck(view, clean, resolver, handler, timeout, finished, 3500);
-                scheduleHiddenMapUrlCheck(view, clean, resolver, handler, timeout, finished, 7000);
-                try {
-                    view.evaluateJavascript(
-                            "(location.href+'\\n'+document.documentElement.innerText+'\\n'+document.documentElement.outerHTML).slice(0,100000)",
-                            value -> tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, value, false));
-                } catch (Exception ignored) {
-                }
-            }
-        });
-
-        handler.postDelayed(timeout, 15000);
-        try {
-            resolver.loadUrl(clean);
-        } catch (Exception e) {
-            timeout.run();
-        }
-    }
-
-    private boolean handleHiddenMapUrl(WebView view, String clean, WebView resolver, Handler handler, Runnable timeout,
-                                       boolean[] finished, String url) {
-        if (tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, url, true)) return true;
-        String fallback = intentFallbackUrl(url);
-        if (!fallback.isEmpty()) {
-            if (tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, fallback, true)) return true;
-            view.loadUrl(fallback);
-            return true;
-        }
-        return false;
-    }
-
-    private void scheduleHiddenMapUrlCheck(WebView view, String clean, WebView resolver, Handler handler, Runnable timeout,
-                                           boolean[] finished, long delayMs) {
-        handler.postDelayed(() -> {
-            if (finished[0]) return;
-            try {
-                view.evaluateJavascript("location.href",
-                        value -> tryFinishWebMapResolve(clean, resolver, handler, timeout, finished, value, true));
-            } catch (Exception ignored) {
-            }
-        }, delayMs);
-    }
-
-    private boolean tryFinishWebMapResolve(String oldLink, WebView resolver, Handler handler, Runnable timeout,
-                                        boolean[] finished, String raw, boolean allowAtCoordinate) {
-        if (finished[0]) return true;
-        Coordinate coordinate = parseResolvedGoogleMapCoordinate(raw, allowAtCoordinate);
-        if (coordinate == null) return false;
-        finished[0] = true;
-        handler.removeCallbacks(timeout);
-        removeResolverWebView(resolver);
-        synchronized (pendingShortMapResolves) {
-            pendingShortMapResolves.remove(oldLink);
-        }
-        String resolved = googleMapSearchLink(coordinate);
-        replaceLocationEverywhere(oldLink, resolved);
-        toast("تم تثبيت اللوكيشن من رابط Google Maps المختصر");
-        if ("customer_map".equals(currentTab)) showCustomerMap();
-        return true;
-    }
-
     private String intentFallbackUrl(String url) {
         String value = emptyForDb(url);
         if (!value.startsWith("intent://")) return "";
@@ -1492,144 +1355,6 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
             return "";
         }
-    }
-
-    private void removeResolverWebView(WebView resolver) {
-        try {
-            resolver.stopLoading();
-            ViewGroup parent = (ViewGroup) resolver.getParent();
-            if (parent != null) parent.removeView(resolver);
-            resolver.destroy();
-        } catch (Exception ignored) {
-        }
-    }
-
-    private Coordinate parseResolvedGoogleMapCoordinate(String value, boolean allowAtCoordinate) {
-        String text = decodeMapPage(value);
-        Coordinate exact = parseExactMapCoordinate(text);
-        if (exact != null) return exact;
-        if (!allowAtCoordinate) return null;
-        Coordinate at = parseAtCoordinate(text);
-        if (at != null) return at;
-        return null;
-    }
-
-    private Coordinate resolveShortMapCoordinate(String shortLink) {
-        String current = shortLink;
-        for (int i = 0; i < 6; i++) {
-            HttpURLConnection connection = null;
-            try {
-                connection = (HttpURLConnection) new URL(current).openConnection();
-                connection.setInstanceFollowRedirects(false);
-                connection.setConnectTimeout(7000);
-                connection.setReadTimeout(7000);
-                connection.setRequestProperty("User-Agent", "Mozilla/5.0");
-                int code = connection.getResponseCode();
-                String location = connection.getHeaderField("Location");
-                if (location != null && !location.trim().isEmpty()) {
-                    current = new URL(new URL(current), location).toString();
-                    Coordinate coordinate = parseExactMapCoordinate(current);
-                    if (coordinate != null) return coordinate;
-                    continue;
-                }
-                Coordinate coordinate = parseExactMapCoordinate(connection.getURL().toString());
-                if (coordinate != null) return coordinate;
-                String body = readSmallBody(connection);
-                coordinate = parseCoordinateFromMapPage(body);
-                if (coordinate != null) return coordinate;
-                String next = extractGoogleMapUrl(body, current);
-                if (!next.isEmpty() && !next.equals(current)) {
-                    current = next;
-                    continue;
-                }
-                coordinate = resolveFollowingRedirects(current);
-                if (coordinate != null) return coordinate;
-                if (code >= 200 && code < 400) return parseExactMapCoordinate(current);
-                return null;
-            } catch (Exception ignored) {
-                return null;
-            } finally {
-                if (connection != null) connection.disconnect();
-            }
-        }
-        return parseExactMapCoordinate(current);
-    }
-
-    private Coordinate resolveFollowingRedirects(String link) {
-        HttpURLConnection connection = null;
-        try {
-            connection = (HttpURLConnection) new URL(link).openConnection();
-            connection.setInstanceFollowRedirects(true);
-            connection.setConnectTimeout(7000);
-            connection.setReadTimeout(7000);
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0");
-            connection.getResponseCode();
-            Coordinate coordinate = parseExactMapCoordinate(connection.getURL().toString());
-            if (coordinate != null) return coordinate;
-            return parseCoordinateFromMapPage(readSmallBody(connection));
-        } catch (Exception ignored) {
-            return null;
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
-    }
-
-    private String readSmallBody(HttpURLConnection connection) {
-        StringBuilder out = new StringBuilder();
-        InputStream input = null;
-        try {
-            input = connection.getInputStream();
-        } catch (Exception e) {
-            input = connection.getErrorStream();
-        }
-        if (input == null) return "";
-        try {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
-            char[] buffer = new char[2048];
-            int total = 0;
-            int read;
-            while ((read = reader.read(buffer)) > 0 && total < 60000) {
-                out.append(buffer, 0, read);
-                total += read;
-            }
-        } catch (Exception ignored) {
-        } finally {
-            try {
-                input.close();
-            } catch (Exception ignored) {
-            }
-        }
-        return out.toString();
-    }
-
-    private Coordinate parseCoordinateFromMapPage(String body) {
-        String text = decodeMapPage(body);
-        Coordinate coordinate = parseExactMapCoordinate(text);
-        if (coordinate != null) return coordinate;
-        String url = extractGoogleMapUrl(text, "");
-        if (!url.isEmpty()) return parseExactMapCoordinate(url);
-        return null;
-    }
-
-    private String extractGoogleMapUrl(String body, String base) {
-        String text = decodeMapPage(body);
-        Matcher direct = Pattern.compile("https://(?:www\\.)?google\\.com/maps[^\\\"'<>\\\\\\s]+|https://maps\\.google\\.com/maps[^\\\"'<>\\\\\\s]+").matcher(text);
-        if (direct.find()) return direct.group();
-        Matcher encoded = Pattern.compile("https%3A%2F%2F(?:www%2E)?google\\.com%2Fmaps[^\\\"'<>\\\\\\s]+|https%3A%2F%2Fmaps\\.google\\.com%2Fmaps[^\\\"'<>\\\\\\s]+", Pattern.CASE_INSENSITIVE).matcher(text);
-        if (encoded.find()) {
-            try {
-                return Uri.decode(encoded.group());
-            } catch (Exception ignored) {
-            }
-        }
-        Matcher refresh = Pattern.compile("url=([^\\\"'<>\\s]+)", Pattern.CASE_INSENSITIVE).matcher(text);
-        if (refresh.find()) {
-            try {
-                return new URL(new URL(base), refresh.group(1)).toString();
-            } catch (Exception ignored) {
-            }
-        }
-        return "";
     }
 
     private String decodeMapPage(String body) {
