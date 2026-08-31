@@ -1,58 +1,55 @@
-plugins {
-    id "com.android.application"
-    id "com.google.gms.google-services"
+plugins { id 'com.android.application' }
+
+if (file('google-services.json').exists()) {
+    apply plugin: 'com.google.gms.google-services'
 }
 
-def githubRunNumberText = System.getenv("GITHUB_RUN_NUMBER") ?: "0"
-def githubRunNumber = githubRunNumberText ==~ /\d+/ ? githubRunNumberText.toInteger() : 0
-def autoVersionCode = githubRunNumber > 0 ? 538000 + githubRunNumber : 538001
-def autoVersionName = githubRunNumber > 0 ? "5.3.8.${githubRunNumber}" : "5.3.8"
+def githubRepository = System.getenv("GITHUB_REPOSITORY") ?: ""
+def githubBranch = System.getenv("GITHUB_REF_NAME") ?: "main"
 
 android {
-    namespace "com.safetyoffice.firemanager"
+    namespace 'com.mohamed.expenseguard'
     compileSdk 35
 
-    signingConfigs {
-        fireManager {
-            storeFile file("firemanager-update.jks")
-            storePassword "FireManager2026"
-            keyAlias "firemanager"
-            keyPassword "FireManager2026"
-        }
+    buildFeatures {
+        buildConfig true
     }
 
     defaultConfig {
-        applicationId "com.safetyoffice.firemanager"
-        minSdk 23
+        applicationId 'com.mohamed.expenseguard'
+        minSdk 26
         targetSdk 35
-        versionCode autoVersionCode
-        versionName autoVersionName
+        versionCode 50
+        versionName '2.39'
+        buildConfigField "String", "GITHUB_REPOSITORY", "\"${githubRepository}\""
+        buildConfigField "String", "GITHUB_BRANCH", "\"${githubBranch}\""
     }
 
-    sourceSets {
-        main {
-            java {
-                exclude "com/mohamed/**"
-            }
+    signingConfigs {
+        masrofatyRelease {
+            storeFile file('masrofaty-release.jks')
+            storePassword 'masrofaty123'
+            keyAlias 'masrofaty'
+            keyPassword 'masrofaty123'
         }
     }
 
     buildTypes {
         debug {
-            signingConfig signingConfigs.fireManager
+            signingConfig signingConfigs.masrofatyRelease
         }
         release {
-            signingConfig signingConfigs.fireManager
+            signingConfig signingConfigs.masrofatyRelease
             minifyEnabled false
-            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            shrinkResources false
         }
     }
 }
 
 dependencies {
-    implementation platform("com.google.firebase:firebase-bom:33.7.0")
-    implementation "com.google.firebase:firebase-auth"
-    implementation "com.google.firebase:firebase-firestore"
-    implementation "com.google.android.gms:play-services-auth:21.3.0"
-    implementation "androidx.core:core:1.13.1"
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-auth'
+    implementation 'com.google.firebase:firebase-firestore'
+    implementation 'com.google.android.gms:play-services-auth:21.3.0'
+    implementation 'androidx.core:core:1.15.0'
 }
